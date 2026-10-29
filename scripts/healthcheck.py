@@ -112,10 +112,18 @@ async def check_sandbox():
 async def check_frontend():
     """Check frontend build."""
     import subprocess
+    import os
     try:
+        frontend_path = Path(__file__).parent.parent / "frontend"
+        if not frontend_path.exists():
+            return False, "Frontend directory not found [FAIL]"
+        
+        # Use shell=True on Windows to find npm in PATH
+        use_shell = os.name == 'nt'
         result = subprocess.run(["npm", "run", "build"], 
-                              cwd=Path(__file__).parent.parent / "frontend",
-                              capture_output=True, text=True, timeout=120)
+                              cwd=str(frontend_path),
+                              capture_output=True, text=True, timeout=120,
+                              shell=use_shell)
         if result.returncode == 0:
             return True, "Frontend build [OK]"
         return False, f"Frontend build failed: {result.stderr[:200]}"
