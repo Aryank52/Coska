@@ -75,18 +75,23 @@ class MockAIProvider(AIProvider):
         
         # Analyze the last user message to provide contextual mock response
         last_msg = messages[-1]["content"] if messages else ""
+        last_msg_lower = last_msg.lower()
         
-        # Hypothesis generation mock
-        if "hypothes" in last_msg.lower() or "Generate 3-5 competing" in last_msg:
+        # Hypothesis generation mock (check for specific hypothesis generation prompt)
+        if "Generate 3-5 competing" in last_msg:
             return self._mock_hypotheses()
         
+        # Remediation mock (check for remediation planner prompt specifically)
+        if "Generate a SPECIFIC, VALIDATED remediation" in last_msg:
+            return self._mock_remediation()
+        
         # Root cause analysis mock
-        if "root cause" in last_msg.lower() or "root_cause" in last_msg.lower():
+        if "root cause" in last_msg_lower or "root_cause" in last_msg_lower:
             return self._mock_root_cause()
         
-        # Remediation mock
-        if "remediation" in last_msg.lower() or "exact_change" in last_msg:
-            return self._mock_remediation()
+        # Generic hypothesis generation mock
+        if "hypothes" in last_msg_lower:
+            return self._mock_hypotheses()
         
         # Generic mock
         return {
@@ -168,6 +173,7 @@ class MockAIProvider(AIProvider):
                 "rollback_plan": "Revert DB_POOL_SIZE to 5 in configuration"
             }
         }
+        # Return just the JSON without extra wrapper
         return {
             "choices": [{
                 "message": {"content": json.dumps(root_cause), "role": "assistant"}

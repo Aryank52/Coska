@@ -6,7 +6,7 @@ import structlog
 
 from app.models import (
     Incident, IncidentStatus, Evidence, Hypothesis, 
-    Remediation, VerificationResult, Verdict, AgentAction
+    Remediation, VerificationResult, Verdict, AgentAction, SourceType
 )
 from app.agent.evidence import EvidenceEngine
 from app.agent.timeline import TimelineBuilder, format_timeline_for_display
@@ -218,7 +218,7 @@ class Orchestrator:
                 )
                 
                 # Execute investigation action using real tools
-                new_evidence = await self._execute_investigation_action(action, incident, hypothesis)
+                new_evidence = await self._execute_investigation_action(action, incident, hypothesis, state)
                 
                 if new_evidence:
                     state.evidence.extend(new_evidence)
@@ -238,7 +238,8 @@ class Orchestrator:
         self, 
         action: str, 
         incident: Incident, 
-        hypothesis: Hypothesis
+        hypothesis: Hypothesis,
+        state: InvestigationState
     ) -> List[Evidence]:
         """Execute a specific investigation action using registered tools."""
         evidence = []
