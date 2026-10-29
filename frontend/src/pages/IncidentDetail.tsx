@@ -1,10 +1,10 @@
 import { Outlet } from 'react-router-dom'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { useState, useEffect } from 'react'
-import { api, getIncident, getIncidentTimeline, getIncidentActions } from '../services/api'
+import { getIncident, getIncidentTimeline, getIncidentActions, investigateIncident } from '../services/api'
 import { IncidentResponse, TimelineEvent, AgentAction } from '../types/incident'
 import { NavLink } from 'react-router-dom'
-import { ChevronRight, Play, Pause, RotateCcw, AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
+import { Play, RotateCcw, AlertTriangle, CheckCircle } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 const TABS = [
@@ -18,7 +18,6 @@ const TABS = [
 
 export function IncidentDetail() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const [incident, setIncident] = useState<IncidentResponse | null>(null)
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
   const [actions, setActions] = useState<AgentAction[]>([])
@@ -57,7 +56,7 @@ export function IncidentDetail() {
     if (!incident) return
     setInvestigating(true)
     try {
-      await api.post(`/incidents/${id}/investigate`, { auto_approve: true })
+      await investigateIncident(id!, true)
       // Poll for completion
       const pollInterval = setInterval(async () => {
         const updated = await getIncident(id!)
@@ -216,7 +215,7 @@ export function IncidentDetail() {
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="section-title">Agent Activity</div>
         <div className="timeline">
-          {actions.slice().reverse().map((action, index) => (
+          {actions.slice().reverse().map((action, _index) => (
             <div key={action.id} className="timeline-item">
               <div 
                 className={`timeline-dot ${action.status === 'COMPLETED' ? 'info' : action.status === 'FAILED' ? 'critical' : 'info'}`}

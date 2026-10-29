@@ -1,8 +1,8 @@
 import { useParams } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { getVerificationReport } from '../services/api'
-import { VerificationReport } from '../types/incident'
-import { CheckCircle, XCircle, AlertTriangle, Clock, Shield, CheckCircle2, Target } from 'lucide-react'
+import { type VerificationReport } from '../types/incident'
+import { CheckCircle, XCircle, AlertTriangle, Shield, CheckCircle2, Target } from 'lucide-react'
 
 const STAGE_CONFIG = {
   baseline: { label: 'BASELINE', icon: AlertTriangle, passedColor: 'var(--accent-danger)', passedLabel: 'FAILED', failedColor: 'var(--accent-primary)', failedLabel: 'PASSED' },
@@ -54,6 +54,22 @@ export function Verification() {
   }
 
   const verdictConfig = VERDICT_CONFIG[report.verdict]
+
+  // Generate receipt object
+  const receipt = {
+    incident_id: id || '',
+    service: '', // Would need incident data
+    root_cause: '', // Would need root cause data
+    remediation: '', // Would need remediation data
+    baseline_test: report.baseline_test ? 'PASSED' : 'FAILED',
+    post_fix_tests: report.post_fix_tests ? 'PASSED' : 'FAILED',
+    health_check: report.health_check ? 'PASSED' : 'FAILED',
+    control_test: !report.control_test ? 'FAILED_WITHOUT_FIX' : 'PASSED_WITH_FIX',
+    verdict: report.verdict,
+    evidence_count: report.evidence_count,
+    model: report.model,
+    timestamp: new Date().toISOString()
+  }
 
   return (
     <div>
@@ -224,19 +240,3 @@ export function Verification() {
     </div>
   )
 }
-
-// Generate receipt object inside component
-const receipt = report ? {
-  incident_id: id || '',
-  service: '', // Would need incident data
-  root_cause: '', // Would need root cause data
-  remediation: '', // Would need remediation data
-  baseline_test: report.baseline_test ? 'PASSED' : 'FAILED',
-  post_fix_tests: report.post_fix_tests ? 'PASSED' : 'FAILED',
-  health_check: report.health_check ? 'PASSED' : 'FAILED',
-  control_test: !report.control_test ? 'FAILED_WITHOUT_FIX' : 'PASSED_WITH_FIX',
-  verdict: report.verdict,
-  evidence_count: report.evidence_count,
-  model: report.model,
-  timestamp: new Date().toISOString()
-} : null

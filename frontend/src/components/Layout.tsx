@@ -1,17 +1,5 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Search, GitBranch, Lightbulb, Target, Shield, CheckCircle, Settings } from 'lucide-react'
-
-const NAV_ITEMS = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/incidents/:id', label: 'Investigation', icon: Search, children: [
-    { path: '', label: 'Overview', icon: Search },
-    { path: 'evidence', label: 'Evidence', icon: GitBranch },
-    { path: 'hypotheses', label: 'Hypotheses', icon: Lightbulb },
-    { path: 'root-cause', label: 'Root Cause', icon: Target },
-    { path: 'remediation', label: 'Remediation', icon: Shield },
-    { path: 'verification', label: 'Verification', icon: CheckCircle },
-  ]}
-]
+import { LayoutDashboard, Search } from 'lucide-react'
 
 export function Layout() {
   const location = useLocation()

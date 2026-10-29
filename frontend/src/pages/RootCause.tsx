@@ -1,7 +1,7 @@
 import { useParams } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { getIncidentRootCause } from '../services/api'
-import { RootCause } from '../types/incident'
+import { type RootCause } from '../types/incident'
 import { CheckCircle, XCircle, AlertTriangle, Target, Shield, Info } from 'lucide-react'
 
 export function RootCause() {

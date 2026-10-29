@@ -2,7 +2,7 @@ import { useParams } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { getIncidentHypotheses } from '../services/api'
 import { Hypothesis, HypothesisStatus } from '../types/incident'
-import { CheckCircle, XCircle, AlertTriangle, Radio, Clock } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Radio } from 'lucide-react'
 
 const STATUS_CONFIG: Record<HypothesisStatus, { color: string; icon: any; label: string }> = {
   SUPPORTED: { color: 'var(--accent-primary)', icon: CheckCircle, label: 'SUPPORTED' },

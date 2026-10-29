@@ -1,9 +1,8 @@
 import { useParams } from 'react-router-dom'
 import { useState, useEffect } from 'react'
-import { getIncident, getIncidentTimeline, getIncidentActions, getIncidentRootCause, getIncidentRemediation } from '../services/api'
-import { IncidentResponse, TimelineEvent, AgentAction, RootCause, Remediation } from '../types/incident'
-import { AlertTriangle, CheckCircle, XCircle, Clock, Search, Lightbulb, Target, Shield, CheckCircle2, RotateCcw } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { getIncident, getIncidentRootCause, getIncidentRemediation } from '../services/api'
+import { IncidentResponse, RootCause, Remediation } from '../types/incident'
+import { AlertTriangle, CheckCircle, Clock, Search, Lightbulb, Target, Shield, CheckCircle2, RotateCcw } from 'lucide-react'
 
 const STEPS = [
   { key: 'TRIAGING', label: 'Triage', icon: AlertTriangle },

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { api } from '../services/api'
-import { Incident, IncidentResponse } from '../types/incident'
-import { Clock, AlertTriangle, Activity, CheckCircle, TrendingUp } from 'lucide-react'
+import { getIncidents } from '../services/api'
+import { IncidentResponse } from '../types/incident'
+import { AlertTriangle, Activity, CheckCircle, TrendingUp } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 export function Dashboard() {
@@ -22,17 +22,17 @@ export function Dashboard() {
 
   const loadIncidents = async () => {
     try {
-      const data = await api.getIncidents()
+      const data = await getIncidents()
       setIncidents(data)
       
       const now = new Date()
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
       
       setStats({
-        active: data.filter(i => i.status !== 'RESOLVED').length,
-        critical: data.filter(i => i.severity === 'CRITICAL' && i.status !== 'RESOLVED').length,
-        investigating: data.filter(i => i.status === 'INVESTIGATING').length,
-        resolvedToday: data.filter(i => 
+        active: data.filter((i: IncidentResponse) => i.status !== 'RESOLVED').length,
+        critical: data.filter((i: IncidentResponse) => i.severity === 'CRITICAL' && i.status !== 'RESOLVED').length,
+        investigating: data.filter((i: IncidentResponse) => i.status === 'INVESTIGATING').length,
+        resolvedToday: data.filter((i: IncidentResponse) => 
           i.status === 'RESOLVED' && new Date(i.updated_at) >= todayStart
         ).length
       })
@@ -139,7 +139,7 @@ export function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {incidents.filter(i => i.status !== 'RESOLVED').map(incident => (
+              {incidents.filter((i: IncidentResponse) => i.status !== 'RESOLVED').map((incident: IncidentResponse) => (
                 <tr key={incident.id}>
                   <td><code className="mono">{incident.id}</code></td>
                   <td><span className="mono">{incident.service}</span></td>
@@ -158,7 +158,7 @@ export function Dashboard() {
                   </td>
                 </tr>
               ))}
-              {incidents.filter(i => i.status !== 'RESOLVED').length === 0 && (
+              {incidents.filter((i: IncidentResponse) => i.status !== 'RESOLVED').length === 0 && (
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: 48, color: 'var(--fg-muted)' }}>
                     No active incidents. All systems operational.
@@ -185,7 +185,7 @@ export function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {incidents.filter(i => i.status === 'RESOLVED').slice(0, 5).map(incident => (
+              {incidents.filter((i: IncidentResponse) => i.status === 'RESOLVED').slice(0, 5).map((incident: IncidentResponse) => (
                 <tr key={incident.id}>
                   <td><code className="mono">{incident.id}</code></td>
                   <td><span className="mono">{incident.service}</span></td>
@@ -196,7 +196,7 @@ export function Dashboard() {
                   </td>
                 </tr>
               ))}
-              {incidents.filter(i => i.status === 'RESOLVED').length === 0 && (
+              {incidents.filter((i: IncidentResponse) => i.status === 'RESOLVED').length === 0 && (
                 <tr>
                   <td colSpan={5} style={{ textAlign: 'center', padding: 32, color: 'var(--fg-muted)' }}>
                     No resolved incidents yet.

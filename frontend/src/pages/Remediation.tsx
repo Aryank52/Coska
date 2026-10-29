@@ -1,8 +1,8 @@
 import { useParams } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { getIncidentRemediation, applyFix } from '../services/api'
-import { Remediation, RemediationType } from '../types/incident'
-import { Shield, AlertTriangle, RotateCcw, CheckCircle, XCircle, Info } from 'lucide-react'
+import { type Remediation, RemediationType } from '../types/incident'
+import { Shield, RotateCcw, Info } from 'lucide-react'
 
 const TYPE_CONFIG: Record<RemediationType, { color: string; icon: any; label: string }> = {
   CONFIGURATION_CHANGE: { color: 'var(--accent-warning)', icon: Shield, label: 'Config Change' },

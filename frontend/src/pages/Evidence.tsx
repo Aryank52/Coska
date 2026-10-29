@@ -1,7 +1,7 @@
 import { useParams } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { getIncidentEvidence } from '../services/api'
-import { Evidence, SourceType } from '../types/incident'
+import { type Evidence, SourceType } from '../types/incident'
 import { FileText, Database, Server, Globe, TestTube, Code, Rocket } from 'lucide-react'
 
 const SOURCE_ICONS: Record<SourceType, any> = {

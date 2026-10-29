@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 import json
 import structlog
 
-from app.models import Incident, Evidence, Hypothesis, RootCause
+from app.models import Incident, Evidence, Hypothesis
 from app.services.nebius import get_nebius_client
 
 logger = structlog.get_logger()
