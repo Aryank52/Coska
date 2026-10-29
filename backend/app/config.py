@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     sandbox_memory_limit: str = "512m"
     sandbox_cpu_limit: float = 1.0
     
+    # AI Provider
+    ai_provider: str = "auto"  # auto, mock, nebius
+    
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
         env_file_encoding="utf-8",

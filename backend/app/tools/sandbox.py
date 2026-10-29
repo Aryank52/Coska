@@ -4,6 +4,7 @@ import docker
 import tempfile
 import os
 import shutil
+import uuid
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import structlog
@@ -30,17 +31,34 @@ class SandboxEngine:
         self.memory_limit = memory_limit
         self.cpu_limit = cpu_limit
         self.client = None
+        self._network_name = f"coska-sandbox-{uuid.uuid4().hex[:8]}"
         self._init_docker()
     
     def _init_docker(self):
-        """Initialize Docker client."""
+        """Initialize Docker client and create sandbox network."""
         try:
             self.client = docker.from_env()
             self.client.ping()
+            # Create isolated network for sandbox containers
+            try:
+                self.client.networks.create(self._network_name, driver="bridge", internal=False)
+                logger.info("docker_network_created", network=self._network_name)
+            except Exception as e:
+                logger.warning("docker_network_create_failed", network=self._network_name, error=str(e))
             logger.info("docker_client_initialized")
         except Exception as e:
             logger.warning("docker_not_available", error=str(e))
             self.client = None
+    
+    def _cleanup_network(self):
+        """Clean up the sandbox network."""
+        if self.client:
+            try:
+                network = self.client.networks.get(self._network_name)
+                network.remove()
+                logger.info("docker_network_removed", network=self._network_name)
+            except Exception:
+                pass
     
     def is_available(self) -> bool:
         """Check if Docker is available."""
@@ -152,7 +170,6 @@ class SandboxEngine:
             sandbox_repo = os.path.join(temp_dir, "repo")
             shutil.copytree(repo_path, sandbox_repo)
             
-            # Build and run test container
             try:
                 # Create Dockerfile for test environment
                 dockerfile = """
@@ -174,13 +191,14 @@ CMD ["pytest", "-v"]
                     rm=True
                 )
                 
-                # Run tests
+                # Run tests in the sandbox network
                 container = self.client.containers.run(
                     image.id,
                     command=test_command,
                     mem_limit=self.memory_limit,
                     cpu_quota=int(self.cpu_limit * 100000),
                     cpu_period=100000,
+                    network=self._network_name,
                     detach=True,
                     remove=False
                 )
@@ -220,9 +238,9 @@ CMD ["pytest", "-v"]
     async def run_health_check(
         self,
         repo_path: str,
-        health_command: str = "python -c \"import requests; requests.get('http://localhost:8000/health')\""
+        health_command: str = "python -c \"import httpx; httpx.get('http://localhost:8000/health', timeout=5)\""
     ) -> SandboxResult:
-        """Run health check in sandbox."""
+        """Run health check in sandbox using the same network."""
         
         if not self.is_available():
             return SandboxResult(
@@ -259,11 +277,12 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
                     rm=True
                 )
                 
-                # Start service container
+                # Start service container in sandbox network
                 service_container = self.client.containers.run(
                     image.id,
                     detach=True,
-                    ports={'8000/tcp': 8000},
+                    network=self._network_name,
+                    network_aliases=["service"],
                     mem_limit=self.memory_limit,
                     cpu_quota=int(self.cpu_limit * 100000),
                     cpu_period=100000,
@@ -273,11 +292,11 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
                 # Wait for service to start
                 await asyncio.sleep(5)
                 
-                # Run health check
+                # Run health check from a container in the same network
                 check_container = self.client.containers.run(
                     "python:3.12-slim",
-                    command=health_command,
-                    network_mode="host",
+                    command=health_command.replace("localhost", "service"),
+                    network=self._network_name,
                     remove=True
                 )
                 
@@ -299,6 +318,13 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
                 
             except Exception as e:
                 logger.error("sandbox_health_check_failed", error=str(e))
+                # Attempt cleanup
+                try:
+                    if 'service_container' in locals():
+                        service_container.stop()
+                        service_container.remove()
+                except Exception:
+                    pass
                 return SandboxResult(
                     success=False,
                     stdout="",
@@ -339,3 +365,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
             
             # Run tests - should FAIL
             return await self.run_tests(sandbox_repo, test_command)
+    
+    def cleanup(self):
+        """Clean up sandbox resources."""
+        self._cleanup_network()

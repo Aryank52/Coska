@@ -1,48 +1,31 @@
-"""Nebius Token Factory client for Nemotron model inference."""
-import os
-import json
-from typing import Any, Dict, List, Optional
-import httpx
+"""Nebius Token Factory provider wrapper for backward compatibility."""
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential
+from typing import Any, Dict, List, Optional
 
+from app.services.providers import get_provider, AIProvider
 from app.config import get_settings
 
 logger = structlog.get_logger()
 
 
 class NebiusClient:
-    """Client for Nebius Token Factory API (OpenAI-compatible)."""
+    """Backward-compatible wrapper around the AI provider abstraction."""
     
     def __init__(self):
         self.settings = get_settings()
-        self.base_url = self.settings.nebius_base_url.rstrip("/")
-        self.api_key = self.settings.nebius_api_key
-        self.model = self.settings.nebius_model
-        self._client: Optional[httpx.AsyncClient] = None
+        self._provider: Optional[AIProvider] = None
     
     @property
-    def client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=httpx.Timeout(120.0, connect=10.0),
+    def provider(self) -> AIProvider:
+        if self._provider is None:
+            self._provider = get_provider(
+                provider_type=self.settings.ai_provider,
+                api_key=self.settings.nebius_api_key,
+                base_url=self.settings.nebius_base_url,
+                model=self.settings.nebius_model
             )
-        return self._client
+        return self._provider
     
-    async def close(self):
-        if self._client:
-            await self._client.aclose()
-            self._client = None
-    
-    @retry(
-        wait=wait_exponential(multiplier=1, min=2, max=30),
-        stop=stop_after_attempt(3),
-    )
     async def chat_completion(
         self,
         messages: List[Dict[str, str]],
@@ -51,64 +34,29 @@ class NebiusClient:
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> Dict[str, Any]:
-        """Send chat completion request to Nemotron."""
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = tool_choice or "auto"
-        
-        logger.debug("nebius_request", model=self.model, message_count=len(messages))
-        
-        response = await self.client.post("/chat/completions", json=payload)
-        response.raise_for_status()
-        
-        result = response.json()
-        logger.debug("nebius_response", model=self.model)
-        return result
+        """Send chat completion request via provider."""
+        return await self.provider.chat_completion(
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
     
     async def health_check(self) -> bool:
-        """Check if Nebius API is accessible."""
-        try:
-            # Try a simple completion
-            result = await self.chat_completion(
-                messages=[{"role": "user", "content": "Say 'OK' if you can hear me."}],
-                max_tokens=10,
-                temperature=0
-            )
-            return bool(result.get("choices"))
-        except Exception as e:
-            logger.error("nebius_health_check_failed", error=str(e))
-            return False
+        """Check if provider is healthy."""
+        info = await self.provider.health_check()
+        return info.reachable and info.authenticated and info.model_available and info.inference_test
     
     async def test_connection(self) -> Dict[str, Any]:
         """Test connection with a simple prompt."""
-        try:
-            result = await self.chat_completion(
-                messages=[
-                    {"role": "system", "content": "You are COSKA, an autonomous incident intelligence system."},
-                    {"role": "user", "content": "Explain what COSKA does in one sentence."}
-                ],
-                max_tokens=100,
-                temperature=0.3
-            )
-            return {
-                "success": True,
-                "model": self.model,
-                "response": result["choices"][0]["message"]["content"] if result.get("choices") else None,
-                "usage": result.get("usage")
-            }
-        except Exception as e:
-            logger.error("nebius_test_connection_failed", error=str(e))
-            return {"success": False, "error": str(e)}
+        return await self.provider.test_inference()
+    
+    async def close(self):
+        await self.provider.close()
 
 
-# Dependency injection
+# Backward-compatible singleton
 _nebius_client: Optional[NebiusClient] = None
 
 

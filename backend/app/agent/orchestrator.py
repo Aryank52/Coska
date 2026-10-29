@@ -15,6 +15,8 @@ from app.agent.root_cause import RootCauseEngine
 from app.agent.remediation import RemediationEngine
 from app.agent.verifier import Verifier, VerificationReport
 from app.tools.sandbox import SandboxEngine
+from app.tools.registry import get_tool_registry
+from app.tools.investigation import register_all_tools
 from app.config import get_settings
 
 logger = structlog.get_logger()
@@ -68,6 +70,10 @@ class Orchestrator:
             cpu_limit=self.settings.sandbox_cpu_limit
         )
         self.verifier = Verifier(self.sandbox, repo_path, self.settings.nebius_model)
+        
+        # Register investigation tools
+        register_all_tools()
+        self.tool_registry = get_tool_registry()
         
         # Active investigations
         self.investigations: Dict[str, InvestigationState] = {}
@@ -211,7 +217,7 @@ class Orchestrator:
                     input_data={"hypothesis_id": hypothesis.id}
                 )
                 
-                # Execute investigation action (simplified - in production use actual tools)
+                # Execute investigation action using real tools
                 new_evidence = await self._execute_investigation_action(action, incident, hypothesis)
                 
                 if new_evidence:
@@ -234,43 +240,55 @@ class Orchestrator:
         incident: Incident, 
         hypothesis: Hypothesis
     ) -> List[Evidence]:
-        """Execute a specific investigation action."""
-        # This is a simplified version - in production, connect to actual tools
+        """Execute a specific investigation action using registered tools."""
         evidence = []
         
-        if action.startswith("inspect_configuration"):
-            key = action.split(":")[1] if ":" in action else "DB_POOL_SIZE"
-            # Simulate finding config
-            evidence.append(Evidence(
-                incident_id=incident.id,
-                source_type="CONFIG",
-                claim=f"Configuration {key} found in system",
-                reference=f"Configuration inspection: {action}",
-                confidence=0.9,
-                related_component="configuration"
-            ))
+        # Parse action: "tool_name:param" or just "tool_name"
+        parts = action.split(":", 1)
+        tool_name = parts[0]
+        param = parts[1] if len(parts) > 1 else None
         
-        elif action.startswith("inspect_logs"):
-            # Simulate log finding
-            evidence.append(Evidence(
-                incident_id=incident.id,
-                source_type="LOG",
-                claim=f"Log analysis for {action.split(':')[1] if ':' in action else 'pattern'} completed",
-                reference=f"Log inspection: {action}",
-                confidence=0.8,
-                related_component="logging"
-            ))
+        # Build tool input
+        tool_input = {"incident_id": incident.id}
+        if param:
+            tool_name = f"{tool_name}"
+            # For configuration, the param is the key
+            if tool_name == "inspect_configuration":
+                tool_input["config_keys"] = [param]
+            elif tool_name == "inspect_logs":
+                tool_input["pattern"] = param
+            elif tool_name == "search_web":
+                tool_input["query"] = param
         
-        elif action.startswith("search_web"):
-            # Simulate web research
-            evidence.append(Evidence(
-                incident_id=incident.id,
-                source_type="WEB",
-                claim=f"Web research for {action.split(':')[1] if ':' in action else 'topic'} completed",
-                reference=f"Tavily search: {action}",
-                confidence=0.7,
-                related_component="external_research"
-            ))
+        state.add_action(
+            "TOOL_CALL",
+            tool_name,
+            f"Calling {tool_name} with input: {tool_input}",
+            input_data=tool_input
+        )
+        
+        # Execute tool
+        result = await self.tool_registry.execute(tool_name, tool_input)
+        
+        state.add_action(
+            "TOOL_RESULT",
+            tool_name,
+            f"Tool {tool_name} returned: {'success' if result.success else 'failed'}",
+            output_data={"success": result.success, "metadata": result.metadata}
+        )
+        
+        if result.success and result.data:
+            # Convert returned evidence to Evidence objects
+            for ev_data in result.data.get("evidence", []):
+                evidence.append(Evidence(
+                    incident_id=incident.id,
+                    source_type=SourceType(ev_data.get("source_type", "RUNTIME")),
+                    claim=ev_data.get("claim", ""),
+                    reference=ev_data.get("reference", ""),
+                    confidence=ev_data.get("confidence", 0.5),
+                    related_component=ev_data.get("related_component"),
+                    raw_data=ev_data.get("raw_data")
+                ))
         
         return evidence
     
@@ -283,6 +301,7 @@ class Orchestrator:
         state.add_action("RESEARCH_EXTERNAL", "tavily", "Researching external technical information")
         
         # Research queries based on top hypotheses
+        web_evidence_count = 0
         for hypothesis in state.hypotheses[:2]:  # Top 2 hypotheses
             if hypothesis.status.value in ["ACTIVE", "SUPPORTED"]:
                 query = f"{hypothesis.title} troubleshooting"
@@ -293,22 +312,28 @@ class Orchestrator:
                     input_data={"query": query}
                 )
                 
-                # Simulate Tavily result (real implementation would call Tavily)
-                evidence = Evidence(
-                    incident_id=incident.id,
-                    source_type="WEB",
-                    claim=f"External research confirms {hypothesis.title.lower()} pattern",
-                    reference=f"Tavily: {query}",
-                    confidence=0.75,
-                    related_component="external_knowledge"
-                )
-                state.evidence.append(evidence)
+                # Use real Tavily tool
+                result = await self.tool_registry.execute("search_web", {"incident_id": incident.id, "query": query, "max_results": 5})
+                
+                if result.success and result.data:
+                    for ev_data in result.data.get("evidence", []):
+                        evidence = Evidence(
+                            incident_id=incident.id,
+                            source_type=SourceType(ev_data.get("source_type", "WEB")),
+                            claim=ev_data.get("claim", ""),
+                            reference=ev_data.get("reference", ""),
+                            confidence=ev_data.get("confidence", 0.5),
+                            related_component=ev_data.get("related_component"),
+                            raw_data=ev_data.get("raw_data")
+                        )
+                        state.evidence.append(evidence)
+                        web_evidence_count += 1
         
         state.add_action(
             "RESEARCH_EXTERNAL",
             "tavily",
-            f"Completed external research, added {len(state.hypotheses[:2])} web evidence items",
-            output_data={"web_evidence_added": len(state.hypotheses[:2])}
+            f"Completed external research, added {web_evidence_count} web evidence items",
+            output_data={"web_evidence_added": web_evidence_count}
         )
     
     async def _phase_root_cause(self, state: InvestigationState):
