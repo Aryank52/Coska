@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # Backend API
+  coska-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - NEBIUS_API_KEY=${NEBIUS_API_KEY}
+      - NEBIUS_BASE_URL=${NEBIUS_BASE_URL}
+      - NEBIUS_MODEL=${NEBIUS_MODEL}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - DATABASE_URL=sqlite:///./coska.db
+      - APP_ENV=production
+    volumes:
+      - ./backend:/app
+      - ./demo/payment-api:/demo/payment-api
+    depends_on:
+      - coska-db
+    restart: unless-stopped
+
+  # Frontend
+  coska-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://coska-backend:8000
+    depends_on:
+      - coska-backend
+    restart: unless-stopped
+
+  # Database for COSKA
+  coska-db:
+    image: sqlite:latest
+    volumes:
+      - coska-data:/data
+    restart: unless-stopped
+
+  # Payment API Demo
+  payment-api:
+    build:
+      context: ./demo/payment-api
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - DB_POOL_SIZE=5
+      - DB_POOL_TIMEOUT=5
+      - DATABASE_URL=sqlite+aiosqlite:///./payments.db
+      - APP_ENV=production
+    volumes:
+      - payment-api-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  coska-data:
+  payment-api-data:

@@ -1,0 +1,11 @@
+{
+  "service": "payment-api",
+  "severity": "CRITICAL",
+  "description": "HTTP 500 error rate increased from 1.2% to 38%. Users experiencing payment failures.",
+  "logs": "2026-10-29T10:15:23.456Z ERROR payment-api: connection pool exhausted\n2026-10-29T10:15:24.123Z ERROR payment-api: timeout waiting for database connection\n2026-10-29T10:15:24.789Z ERROR payment-api: connection pool exhausted\n2026-10-29T10:15:25.001Z ERROR payment-api: timeout waiting for database connection\n2026-10-29T10:15:25.555Z ERROR payment-api: connection pool exhausted\n2026-10-29T10:15:26.234Z ERROR payment-api: HTTP 500 - Database connection timeout\n2026-10-29T10:15:26.890Z ERROR payment-api: connection pool exhausted\n2026-10-29T10:15:27.111Z ERROR payment-api: timeout waiting for database connection\n2026-10-29T10:15:27.666Z ERROR payment-api: connection pool exhausted\n2026-10-29T10:15:28.000Z ERROR payment-api: HTTP 500 - Database connection timeout\n2026-10-29T10:15:28.555Z ERROR payment-api: connection pool exhausted\n2026-10-29T10:15:29.123Z ERROR payment-api: timeout waiting for database connection\n2026-10-29T10:15:29.777Z ERROR payment-api: connection pool exhausted\n2026-10-29T10:15:30.001Z ERROR payment-api: HTTP 500 - Database connection timeout\n... (17 total pool exhaustion events in 90 seconds)",
+  "deployment": "payment-api v1.8.2 deployed at 2026-10-29T10:10:00Z",
+  "repository": "https://github.com/coska/payment-api",
+  "metadata": {
+    "configuration": "DB_POOL_SIZE=5\nDB_POOL_TIMEOUT=5\nDATABASE_URL=sqlite+aiosqlite:///./payments.db"
+  }
+}
