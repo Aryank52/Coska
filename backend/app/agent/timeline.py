@@ -42,11 +42,12 @@ class TimelineBuilder:
         # Deployment events
         deployment_evidence = [e for e in evidence if e.source_type == SourceType.DEPLOYMENT]
         for ev in deployment_evidence:
-            if 'version' in ev.raw_data:
+            raw_data = ev.raw_data or {}
+            if 'version' in raw_data:
                 events.append(TimelineEvent(
                     timestamp=ev.timestamp,
                     event_type="DEPLOYMENT",
-                    title=f"Deployment {ev.raw_data.get('version', 'unknown')}",
+                    title=f"Deployment {raw_data.get('version', 'unknown')}",
                     description=ev.claim,
                     source_type=SourceType.DEPLOYMENT,
                     evidence_ids=[ev.id],

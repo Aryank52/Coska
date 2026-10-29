@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     sandbox_cpu_limit: float = 1.0
     
     # AI Provider
-    ai_provider: str = "mock"  # auto, mock, nebius
+    ai_provider: str = "nebius"  # auto, mock, nebius
     
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
