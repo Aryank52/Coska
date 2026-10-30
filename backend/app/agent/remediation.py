@@ -158,6 +158,8 @@ Return JSON:
             end = content.rfind('}') + 1
             if start >= 0 and end > start:
                 rec = json.loads(content[start:end])
+                if "recommended_remediation" in rec and isinstance(rec["recommended_remediation"], dict):
+                    rec = rec["recommended_remediation"]
                 
                 remediation = Remediation(
                     incident_id=incident.id,

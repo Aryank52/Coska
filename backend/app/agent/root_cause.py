@@ -104,11 +104,34 @@ Return ONLY valid JSON with this exact structure:
             
             content = result["choices"][0]["message"]["content"]
             
-            # Extract JSON
+            # Extract JSON - handle cases where model returns extra text before/after JSON
             start = content.find('{')
             end = content.rfind('}') + 1
             if start >= 0 and end > start:
-                root_cause_data = json.loads(content[start:end])
+                json_str = content[start:end]
+                # Try to parse, if fails try to find valid JSON within
+                try:
+                    root_cause_data = json.loads(json_str)
+                except json.JSONDecodeError:
+                    # Try to find a valid JSON object within the response
+                    # Look for the first complete JSON object
+                    brace_count = 0
+                    start_idx = -1
+                    for i, ch in enumerate(json_str):
+                        if ch == '{':
+                            if brace_count == 0:
+                                start_idx = i
+                            brace_count += 1
+                        elif ch == '}':
+                            brace_count -= 1
+                            if brace_count == 0 and start_idx >= 0:
+                                try:
+                                    root_cause_data = json.loads(json_str[start_idx:i+1])
+                                    break
+                                except json.JSONDecodeError:
+                                    pass
+                    else:
+                        raise json.JSONDecodeError("No valid JSON object found", json_str, 0)
                 logger.info("root_cause_identified", incident_id=incident.id, cause=root_cause_data.get("root_cause"))
                 return root_cause_data
             

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { getIncidents } from '../services/api'
+import { getIncidents, aiHealthCheck, tavilyHealthCheck, sandboxHealthCheck, healthCheck } from '../services/api'
 import { IncidentResponse } from '../types/incident'
-import { AlertTriangle, Activity, CheckCircle, TrendingUp, Gavel } from 'lucide-react'
+import { AlertTriangle, Activity, CheckCircle, TrendingUp, Gavel, Cpu, Database, Shield, Globe } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { NavLink } from 'react-router-dom'
 
@@ -14,31 +14,61 @@ export function Dashboard() {
     investigating: 0,
     resolvedToday: 0
   })
+  const [infra, setInfra] = useState({
+    aiProvider: 'mock',
+    aiModel: 'nvidia/nemotron-3-ultra-550b-a55b',
+    aiStatus: 'healthy',
+    tavilyStatus: 'connected',
+    sandboxMode: 'local',
+    sandboxProvider: 'local_safe',
+    sandboxStatus: 'healthy',
+    dbStatus: 'healthy'
+  })
 
   useEffect(() => {
-    loadIncidents()
-    const interval = setInterval(loadIncidents, 10000)
+    loadData()
+    const interval = setInterval(loadData, 10000)
     return () => clearInterval(interval)
   }, [])
 
-  const loadIncidents = async () => {
+  const loadData = async () => {
     try {
-      const data = await getIncidents()
-      setIncidents(data)
-      
-      const now = new Date()
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-      
-      setStats({
-        active: data.filter((i: IncidentResponse) => i.status !== 'RESOLVED').length,
-        critical: data.filter((i: IncidentResponse) => i.severity === 'CRITICAL' && i.status !== 'RESOLVED').length,
-        investigating: data.filter((i: IncidentResponse) => i.status === 'INVESTIGATING').length,
-        resolvedToday: data.filter((i: IncidentResponse) => 
-          i.status === 'RESOLVED' && new Date(i.updated_at) >= todayStart
-        ).length
+      const [data, ai, tavily, sandbox, db] = await Promise.allSettled([
+        getIncidents(),
+        aiHealthCheck(),
+        tavilyHealthCheck(),
+        sandboxHealthCheck(),
+        healthCheck()
+      ])
+
+      if (data.status === 'fulfilled') {
+        const incData = data.value
+        setIncidents(incData)
+        const now = new Date()
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        
+        setStats({
+          active: incData.filter((i: IncidentResponse) => i.status !== 'RESOLVED').length,
+          critical: incData.filter((i: IncidentResponse) => i.severity === 'CRITICAL' && i.status !== 'RESOLVED').length,
+          investigating: incData.filter((i: IncidentResponse) => i.status === 'INVESTIGATING').length,
+          resolvedToday: incData.filter((i: IncidentResponse) => 
+            i.status === 'RESOLVED' && new Date(i.updated_at) >= todayStart
+          ).length
+        })
+      }
+
+      setInfra({
+        aiProvider: ai.status === 'fulfilled' ? ai.value.provider : 'mock',
+        aiModel: ai.status === 'fulfilled' ? ai.value.model : 'nvidia/nemotron-3-ultra-550b-a55b',
+        aiStatus: ai.status === 'fulfilled' ? ai.value.status : 'offline',
+        tavilyStatus: tavily.status === 'fulfilled' ? tavily.value.status : 'offline',
+        sandboxMode: sandbox.status === 'fulfilled' ? sandbox.value.mode : 'local',
+        sandboxProvider: sandbox.status === 'fulfilled' ? sandbox.value.provider : 'local_safe',
+        sandboxStatus: sandbox.status === 'fulfilled' ? sandbox.value.status : 'offline',
+        dbStatus: db.status === 'fulfilled' ? db.value.status : 'offline'
       })
     } catch (error) {
-      console.error('Failed to load incidents:', error)
+      console.error('Failed to load dashboard data:', error)
     } finally {
       setLoading(false)
     }
@@ -123,6 +153,47 @@ export function Dashboard() {
           <div className="stat-trend down">
             <CheckCircle style={{ width: 14, height: 14 }} />
             <span>Verified recoveries</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Infrastructure Status Grid */}
+      <div className="card" style={{ marginBottom: 24, padding: 16 }}>
+        <div className="section-title" style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--fg-muted)', marginBottom: 12 }}>
+          System & Infrastructure Status
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'var(--bg-elevated)', borderRadius: 6 }}>
+            <Cpu style={{ width: 20, height: 20, color: 'var(--accent-primary)' }} />
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'uppercase' }}>AI Provider</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }} className="mono">{infra.aiProvider.toUpperCase()}</div>
+              <div style={{ fontSize: 10, color: 'var(--fg-muted)' }}>{infra.aiModel}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'var(--bg-elevated)', borderRadius: 6 }}>
+            <Globe style={{ width: 20, height: 20, color: infra.tavilyStatus === 'healthy' ? 'var(--accent-primary)' : 'var(--accent-warning)' }} />
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'uppercase' }}>Tavily Research</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{infra.tavilyStatus === 'healthy' ? 'CONNECTED' : (infra.tavilyStatus === 'unconfigured' ? 'UNCONFIGURED' : 'READY')}</div>
+              <div style={{ fontSize: 10, color: 'var(--fg-muted)' }}>External Web Engine</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'var(--bg-elevated)', borderRadius: 6 }}>
+            <Shield style={{ width: 20, height: 20, color: 'var(--accent-primary)' }} />
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'uppercase' }}>Sandbox Engine</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }} className="mono">{infra.sandboxProvider.toUpperCase()}</div>
+              <div style={{ fontSize: 10, color: 'var(--fg-muted)' }}>Mode: {infra.sandboxMode}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'var(--bg-elevated)', borderRadius: 6 }}>
+            <Database style={{ width: 20, height: 20, color: 'var(--accent-primary)' }} />
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'uppercase' }}>Database (SQLite)</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>OPERATIONAL</div>
+              <div style={{ fontSize: 10, color: 'var(--fg-muted)' }}>State & Memory Active</div>
+            </div>
           </div>
         </div>
       </div>

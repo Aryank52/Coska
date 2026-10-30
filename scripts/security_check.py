@@ -67,22 +67,24 @@ def scan_file(path: Path) -> List[Tuple[str, int, str]]:
         lines = content.split('\n')
         
         for line_num, line in enumerate(lines, 1):
+            stripped = line.strip()
             # Check for secret patterns
             for pattern, desc in SECRET_PATTERNS:
                 if re.search(pattern, line):
-                    # Skip if it's in a comment or test file
-                    if not line.strip().startswith('#') and 'test' not in str(path).lower():
-                        issues.append((f"SECRET: {desc}", line_num, line.strip()[:100]))
+                    # Skip if it's in a comment or test file or example
+                    if not stripped.startswith('#') and 'test' not in str(path).lower() and '.example' not in str(path).lower():
+                        redacted = re.sub(r'([:=]\s*["\']?)[^\s"\']+', r'\1[REDACTED]', stripped)
+                        issues.append((f"SECRET: {desc}", line_num, redacted[:100]))
             
             # Check for unsafe commands
             for pattern in UNSAFE_COMMANDS:
                 if re.search(pattern, line):
-                    issues.append((f"UNSAFE_COMMAND", line_num, line.strip()[:100]))
+                    issues.append(("UNSAFE_COMMAND", line_num, stripped[:100]))
             
             # Check for suspicious patterns
             for pattern, desc in SUSPICIOUS_PATTERNS:
                 if re.search(pattern, line):
-                    issues.append((f"SUSPICIOUS: {desc}", line_num, line.strip()[:100]))
+                    issues.append((f"SUSPICIOUS: {desc}", line_num, stripped[:100]))
     
     except Exception:
         pass
@@ -96,30 +98,32 @@ def scan_directory(root: Path, exclude_dirs: set = None) -> List[Tuple[str, int,
         exclude_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', 'dist', 'build', '.pytest_cache', '.mypy_cache'}
     
     all_issues = []
+    import os
     
-    for file_path in root.rglob('*'):
-        if file_path.is_file():
-            # Skip binary files and excluded directories
-            if any(part in exclude_dirs for part in file_path.parts):
-                continue
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune excluded directories in-place
+        dirnames[:] = [d for d in dirnames if d not in exclude_dirs and not d.startswith('.pytest')]
+        
+        for fname in filenames:
+            file_path = Path(dirpath) / fname
+            
+            # Check for sensitive files
+            for pattern in SENSITIVE_FILES:
+                if re.search(pattern, fname, re.IGNORECASE):
+                    if fname != '.env.example' and not fname.endswith('.example'):
+                        try:
+                            rel_path = file_path.relative_to(root)
+                            all_issues.append(("SENSITIVE_FILE", 0, str(rel_path), file_path))
+                        except ValueError:
+                            pass
             
             # Check file extension
             if file_path.suffix in {'.py', '.js', '.ts', '.tsx', '.jsx', '.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.env', '.sh', '.bash', '.zsh'}:
                 issues = scan_file(file_path)
                 for issue_type, line_num, snippet in issues:
                     all_issues.append((issue_type, line_num, snippet, file_path))
-        
-        # Check for sensitive files
-        for file_path in root.rglob('*'):
-            if file_path.is_file():
-                for pattern in SENSITIVE_FILES:
-                    if re.search(pattern, file_path.name, re.IGNORECASE):
-                        rel_path = file_path.relative_to(root)
-                        # Allow .env.example
-                        if file_path.name != '.env.example':
-                            yield ("SENSITIVE_FILE", 0, str(rel_path), file_path)
     
-    return list(all_issues)
+    return all_issues
 
 
 def check_gitignore(root: Path) -> List[str]:
@@ -237,16 +241,11 @@ def main():
     
     # Check for sensitive files
     print("\n[5/6] Checking for sensitive files...")
-    sensitive_files = list(Path(__file__).parent.parent.rglob('*'))
-    found_sensitive = False
-    for pattern in SENSITIVE_FILES:
-        for file_path in Path(__file__).parent.parent.rglob('*'):
-            if file_path.is_file() and re.search(pattern, file_path.name, re.IGNORECASE):
-                if file_path.name != '.env.example':
-                    rel = file_path.relative_to(Path(__file__).parent.parent)
-                    print(f"  [WARN] Sensitive file: {rel}")
-                    found_sensitive = True
-    if not found_sensitive:
+    sensitive_issues = [issue for issue in issues if issue[0] == "SENSITIVE_FILE"]
+    if sensitive_issues:
+        for _, _, rel, _ in sensitive_issues:
+            print(f"  [WARN] Sensitive file: {rel}")
+    else:
         print("  No sensitive files found in working directory")
     
     # Summary

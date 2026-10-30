@@ -1,11 +1,13 @@
-"""Health check endpoints."""
-from fastapi import APIRouter, Depends
+"""Health check endpoints for COSKA subsystems."""
+from fastapi import APIRouter
 from pydantic import BaseModel
+from typing import Dict, Any, Optional
 import structlog
 
 from app.config import get_settings
-from app.services.nebius import NebiusClient
-from app.services.tavily import TavilyClient
+from app.services.providers import get_provider
+from app.services.tavily import get_tavily_client
+from app.tools.sandbox import SandboxEngine
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -19,10 +21,27 @@ class HealthResponse(BaseModel):
 
 class AIHealthResponse(BaseModel):
     status: str
-    nebius_connected: bool
-    nebius_model: str
-    tavily_connected: bool
-    details: dict = {}
+    provider: str
+    model: str
+    reachable: bool
+    authenticated: bool
+    model_available: bool
+    details: Dict[str, Any] = {}
+
+
+class TavilyHealthResponse(BaseModel):
+    status: str
+    configured: bool
+    connected: bool
+    details: Dict[str, Any] = {}
+
+
+class SandboxHealthResponse(BaseModel):
+    status: str
+    provider: str
+    available: bool
+    mode: str
+    details: Dict[str, Any] = {}
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -32,35 +51,76 @@ async def health_check():
 
 
 @router.get("/health/ai", response_model=AIHealthResponse)
-async def ai_health_check(
-    nebius: NebiusClient = Depends(),
-    tavily: TavilyClient = Depends()
-):
+async def ai_health_check():
     """AI provider health check."""
-    nebius_ok = False
-    tavily_ok = False
-    details = {}
+    settings = get_settings()
+    provider = get_provider()
     
-    # Check Nebius
     try:
-        nebius_ok = await nebius.health_check()
-        details["nebius"] = "connected" if nebius_ok else "disconnected"
+        info = await provider.health_check()
+        is_healthy = info.reachable and info.authenticated
+        return AIHealthResponse(
+            status="healthy" if is_healthy else "degraded",
+            provider=info.name,
+            model=info.model,
+            reachable=info.reachable,
+            authenticated=info.authenticated,
+            model_available=info.model_available,
+            details={
+                "base_url": info.base_url,
+                "inference_test": info.inference_test,
+                "error": info.error
+            }
+        )
     except Exception as e:
-        logger.warning("nebius_health_check_failed", error=str(e))
-        details["nebius"] = f"error: {str(e)}"
+        logger.warning("ai_health_check_failed", error=str(e))
+        return AIHealthResponse(
+            status="unhealthy",
+            provider=settings.ai_provider,
+            model=settings.nebius_model,
+            reachable=False,
+            authenticated=False,
+            model_available=False,
+            details={"error": str(e)}
+        )
+
+
+@router.get("/health/tavily", response_model=TavilyHealthResponse)
+async def tavily_health_check():
+    """Tavily web research service health check."""
+    tavily = get_tavily_client()
+    configured = tavily.is_configured
+    connected = False
     
-    # Check Tavily
-    try:
-        tavily_ok = await tavily.health_check()
-        details["tavily"] = "connected" if tavily_ok else "disconnected"
-    except Exception as e:
-        logger.warning("tavily_health_check_failed", error=str(e))
-        details["tavily"] = f"error: {str(e)}"
-    
-    return AIHealthResponse(
-        status="healthy" if (nebius_ok and tavily_ok) else "degraded",
-        nebius_connected=nebius_ok,
-        nebius_model=get_settings().nebius_model,
-        tavily_connected=tavily_ok,
-        details=details
+    if configured:
+        connected = await tavily.health_check()
+
+    return TavilyHealthResponse(
+        status="healthy" if connected else ("unconfigured" if not configured else "degraded"),
+        configured=configured,
+        connected=connected,
+        details={
+            "status_code": "TAVILY_READY" if connected else ("TAVILY_NOT_CONFIGURED" if not configured else "TAVILY_UNAVAILABLE")
+        }
+    )
+
+
+@router.get("/health/sandbox", response_model=SandboxHealthResponse)
+async def sandbox_health_check():
+    """Sandbox execution subsystem health check."""
+    settings = get_settings()
+    sandbox = SandboxEngine()
+    available = sandbox.is_available()
+
+    return SandboxHealthResponse(
+        status="healthy" if available else "degraded",
+        provider=sandbox.provider_name,
+        available=available,
+        mode=settings.sandbox_mode,
+        details={
+            "timeout": settings.sandbox_timeout,
+            "memory_limit": settings.sandbox_memory_limit,
+            "cpu_limit": settings.sandbox_cpu_limit,
+            "is_docker": sandbox.provider_name == "docker"
+        }
     )

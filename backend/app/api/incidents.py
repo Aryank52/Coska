@@ -140,9 +140,24 @@ async def get_incident_timeline(incident_id: str):
     """Get incident timeline."""
     orchestrator = get_orchestrator()
     state = orchestrator.get_investigation(incident_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Investigation not found")
-    return {"incident_id": incident_id, "timeline": state.timeline}
+    if state and state.timeline:
+        return {"incident_id": incident_id, "timeline": state.timeline}
+    
+    storage = get_storage()
+    persisted = storage.get_investigation_state(incident_id)
+    if persisted and persisted.get("timeline"):
+        return {"incident_id": incident_id, "timeline": persisted.get("timeline")}
+    
+    # If not yet generated, build on the fly from stored evidence
+    incident = storage.get_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    
+    from app.agent.timeline import TimelineBuilder, format_timeline_for_display
+    evidence = storage.get_evidence(incident_id)
+    events = TimelineBuilder().build(incident, evidence)
+    timeline = format_timeline_for_display(events)
+    return {"incident_id": incident_id, "timeline": timeline}
 
 
 @router.get("/incidents/{incident_id}/evidence")
@@ -174,9 +189,15 @@ async def get_incident_root_cause(incident_id: str):
     """Get root cause analysis."""
     orchestrator = get_orchestrator()
     state = orchestrator.get_investigation(incident_id)
-    if not state or not state.root_cause:
-        raise HTTPException(status_code=404, detail="Root cause not available")
-    return {"incident_id": incident_id, "root_cause": state.root_cause}
+    if state and state.root_cause:
+        return {"incident_id": incident_id, "root_cause": state.root_cause}
+    
+    storage = get_storage()
+    persisted = storage.get_investigation_state(incident_id)
+    if persisted and persisted.get("root_cause"):
+        return {"incident_id": incident_id, "root_cause": persisted.get("root_cause")}
+        
+    raise HTTPException(status_code=404, detail="Root cause not available")
 
 
 @router.get("/incidents/{incident_id}/remediation")

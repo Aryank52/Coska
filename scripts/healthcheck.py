@@ -45,6 +45,9 @@ async def check_docker():
         client.ping()
         return True, "Docker [OK]"
     except Exception:
+        settings = get_settings()
+        if settings.sandbox_mode in ("local", "auto"):
+            return True, "Docker: not running (optional - local safe sandbox is active) [OK]"
         return False, "Docker not available [WARN] (required for sandbox verification)"
 
 

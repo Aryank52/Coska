@@ -1,5 +1,12 @@
-"""AI Provider abstraction for COSKA runtime."""
+"""AI Provider abstraction for COSKA runtime.
+
+Provides a unified interface for model reasoning via Nebius Token Factory
+(NVIDIA Nemotron models) and deterministic MockAIProvider for local testing.
+"""
 from abc import ABC, abstractmethod
+import asyncio
+import json
+import re
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import structlog
@@ -8,6 +15,53 @@ from app.config import get_settings
 
 logger = structlog.get_logger()
 
+
+# =============================================================================
+# Explicit Provider Error States
+# =============================================================================
+
+class ProviderError(Exception):
+    """Base class for all AI provider errors."""
+    def __init__(self, message: str, status: str = "PROVIDER_ERROR", status_code: Optional[int] = None):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+        self.status_code = status_code
+
+
+class ProviderNotConfiguredError(ProviderError):
+    def __init__(self, message: str = "AI Provider is not configured"):
+        super().__init__(message, status="PROVIDER_NOT_CONFIGURED", status_code=500)
+
+
+class ProviderUnauthorizedError(ProviderError):
+    def __init__(self, message: str = "Invalid credentials for AI provider"):
+        super().__init__(message, status="PROVIDER_UNAUTHORIZED", status_code=401)
+
+
+class ProviderRateLimitedError(ProviderError):
+    def __init__(self, message: str = "Rate limit exceeded (HTTP 429)"):
+        super().__init__(message, status="PROVIDER_RATE_LIMITED", status_code=429)
+
+
+class ProviderUnavailableError(ProviderError):
+    def __init__(self, message: str = "AI provider service is unavailable", status_code: Optional[int] = 503):
+        super().__init__(message, status="PROVIDER_UNAVAILABLE", status_code=status_code)
+
+
+class ModelUnavailableError(ProviderError):
+    def __init__(self, message: str = "Requested model is unavailable"):
+        super().__init__(message, status="MODEL_UNAVAILABLE", status_code=404)
+
+
+class ProviderInvalidResponseError(ProviderError):
+    def __init__(self, message: str = "Malformed or empty response from AI provider"):
+        super().__init__(message, status="PROVIDER_INVALID_RESPONSE", status_code=502)
+
+
+# =============================================================================
+# Provider Models & Interface
+# =============================================================================
 
 @dataclass
 class ProviderInfo:
@@ -24,7 +78,7 @@ class ProviderInfo:
 
 class AIProvider(ABC):
     """Abstract base class for AI providers."""
-    
+
     @abstractmethod
     async def chat_completion(
         self,
@@ -36,31 +90,35 @@ class AIProvider(ABC):
     ) -> Dict[str, Any]:
         """Send chat completion request."""
         pass
-    
+
     @abstractmethod
     async def health_check(self) -> ProviderInfo:
         """Check provider health and model availability."""
         pass
-    
+
     @abstractmethod
     async def test_inference(self, prompt: str = "Reply with exactly: COSKA_NEBIUS_OK") -> Dict[str, Any]:
         """Test inference with a simple prompt."""
         pass
-    
+
     @abstractmethod
     async def close(self):
         """Close provider connections."""
         pass
 
 
+# =============================================================================
+# Mock Provider Implementation
+# =============================================================================
+
 class MockAIProvider(AIProvider):
-    """Mock provider for development and testing."""
-    
-    def __init__(self, model: str = "mock-model"):
+    """Deterministic mock provider supporting the full COSKA workflow."""
+
+    def __init__(self, model: str = "nvidia/nemotron-3-ultra-550b-a55b"):
         self.model = model
         self.call_count = 0
         self.last_messages: List[Dict] = []
-    
+
     async def chat_completion(
         self,
         messages: List[Dict[str, str]],
@@ -69,90 +127,132 @@ class MockAIProvider(AIProvider):
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> Dict[str, Any]:
-        """Return mock responses based on message content."""
+        """Return deterministic mock responses based on message content."""
         self.call_count += 1
         self.last_messages = messages
-        
-        # Analyze the last user message to provide contextual mock response
-        last_msg = messages[-1]["content"] if messages else ""
-        last_msg_lower = last_msg.lower()
-        
-        # Hypothesis generation mock (check for specific hypothesis generation prompt)
-        if "Generate 3-5 competing" in last_msg:
-            return self._mock_hypotheses()
-        
-        # Remediation mock (check for remediation planner prompt specifically)
-        if "Generate a SPECIFIC, VALIDATED remediation" in last_msg:
-            return self._mock_remediation()
-        
-        # Root cause analysis mock
-        if "root cause" in last_msg_lower or "root_cause" in last_msg_lower:
-            return self._mock_root_cause()
-        
-        # Generic hypothesis generation mock
-        if "hypothes" in last_msg_lower:
-            return self._mock_hypotheses()
-        
-        # Generic mock
+
+        system_msg = ""
+        for m in messages:
+            if m.get("role") == "system":
+                system_msg = m.get("content", "").lower()
+                break
+        last_msg = messages[-1].get("content", "").lower() if messages else ""
+        all_text = " ".join([m.get("content", "") for m in messages]).lower()
+
+        # 1. Remediation planner: system message indicates remediation OR prompt specifically requests remediation plan
+        if "remediation" in system_msg or "generating a remediation plan" in last_msg or "generate a specific, validated remediation" in last_msg:
+            return self._mock_remediation(all_text)
+
+        # 2. Hypothesis generation: system message indicates hypotheses OR prompt requests competing hypotheses
+        if "hypothes" in system_msg or "competing root cause hypotheses" in last_msg or "current hypotheses:" in last_msg or "return as json array" in last_msg:
+            return self._mock_hypotheses(all_text)
+
+        # 3. Root cause reasoning: system message indicates root cause OR prompt tasks root cause determination
+        if "root cause analyst" in system_msg or "performing root cause analysis" in last_msg or "determine the root cause" in last_msg or "root_cause" in last_msg or "root cause" in last_msg:
+            return self._mock_root_cause(all_text)
+
+        # Default structured response
         return {
             "choices": [{
                 "message": {
-                    "content": "Mock AI response for development.",
+                    "content": json.dumps({"status": "acknowledged", "model": self.model}),
                     "role": "assistant"
                 }
             }],
             "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
         }
-    
-    def _mock_hypotheses(self) -> Dict[str, Any]:
-        import json
-        hypotheses = [
-            {
-                "title": "Database connection pool exhaustion",
-                "description": "Application cannot acquire database connections due to undersized pool configuration (DB_POOL_SIZE=5)",
-                "supporting_evidence_ids": ["E-1", "E-2", "E-3"],
-                "contradicting_evidence_ids": [],
-                "confidence": 0.91,
-                "next_investigation_action": "inspect_configuration:DB_POOL_SIZE",
-                "status": "ACTIVE"
-            },
-            {
-                "title": "Database server saturation",
-                "description": "Database server CPU/memory/disk saturated causing slow responses and timeouts",
-                "supporting_evidence_ids": [],
-                "contradicting_evidence_ids": ["E-1", "E-2"],
-                "confidence": 0.05,
-                "next_investigation_action": "inspect_runtime:database_metrics",
-                "status": "WEAKENED"
-            },
-            {
-                "title": "Network instability",
-                "description": "Network issues between application and database causing connection failures",
-                "supporting_evidence_ids": [],
-                "contradicting_evidence_ids": ["E-1"],
-                "confidence": 0.03,
-                "next_investigation_action": "inspect_runtime:network_metrics",
-                "status": "WEAKENED"
-            },
-            {
-                "title": "Application memory pressure",
-                "description": "Application memory exhaustion causing GC pauses and request failures",
-                "supporting_evidence_ids": [],
-                "contradicting_evidence_ids": ["E-1", "E-2", "E-3"],
-                "confidence": 0.01,
-                "next_investigation_action": "inspect_runtime:memory_usage",
-                "status": "REJECTED"
-            }
-        ]
+
+    def _mock_hypotheses(self, context: str) -> Dict[str, Any]:
+        """Generate competing hypotheses tailored to scenario context."""
+        if "retry" in context or "504" in context or "gateway" in context:
+            hypotheses = [
+                {
+                    "title": "Upstream timeout and excessive retry storm",
+                    "description": "High retry count (RETRY_COUNT=10) combined with short timeout (5s) causes cascading worker exhaustion during upstream latency spikes.",
+                    "supporting_evidence_ids": ["E-1", "E-2"],
+                    "contradicting_evidence_ids": [],
+                    "confidence": 0.88,
+                    "next_investigation_action": "inspect_configuration:RETRY_COUNT",
+                    "status": "SUPPORTED"
+                },
+                {
+                    "title": "Database connection pool exhaustion",
+                    "description": "Worker threads locked waiting for DB connections under concurrent retry load",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": ["E-1"],
+                    "confidence": 0.15,
+                    "next_investigation_action": "inspect_configuration:DB_POOL_SIZE",
+                    "status": "WEAKENED"
+                },
+                {
+                    "title": "Network partition with payment gateway",
+                    "description": "Total network disconnect between service and upstream payment processor",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": ["E-2"],
+                    "confidence": 0.05,
+                    "next_investigation_action": "inspect_runtime:network_status",
+                    "status": "WEAKENED"
+                },
+                {
+                    "title": "Application memory leak",
+                    "description": "Garbage collection pauses triggering connection timeouts",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": ["E-1", "E-2"],
+                    "confidence": 0.02,
+                    "next_investigation_action": "inspect_runtime:memory_usage",
+                    "status": "REJECTED"
+                }
+            ]
+        else:
+            # Default payment-api pool exhaustion scenario
+            hypotheses = [
+                {
+                    "title": "Database connection pool exhaustion",
+                    "description": "Application cannot acquire database connections due to undersized pool configuration (DB_POOL_SIZE=5)",
+                    "supporting_evidence_ids": ["E-1", "E-2", "E-3"],
+                    "contradicting_evidence_ids": [],
+                    "confidence": 0.91,
+                    "next_investigation_action": "inspect_configuration:DB_POOL_SIZE",
+                    "status": "SUPPORTED"
+                },
+                {
+                    "title": "Database server saturation",
+                    "description": "Database server CPU/memory/disk saturated causing slow responses and timeouts",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": ["E-1", "E-2"],
+                    "confidence": 0.08,
+                    "next_investigation_action": "inspect_runtime:database_metrics",
+                    "status": "WEAKENED"
+                },
+                {
+                    "title": "Network instability",
+                    "description": "Network packet loss between application and database causing connection failures",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": ["E-1"],
+                    "confidence": 0.05,
+                    "next_investigation_action": "inspect_runtime:network_metrics",
+                    "status": "WEAKENED"
+                },
+                {
+                    "title": "Application memory pressure",
+                    "description": "Application memory exhaustion causing GC pauses and request failures",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": ["E-1", "E-2", "E-3"],
+                    "confidence": 0.01,
+                    "next_investigation_action": "inspect_runtime:memory_usage",
+                    "status": "REJECTED"
+                }
+            ]
+
         return {
             "choices": [{
                 "message": {"content": json.dumps(hypotheses), "role": "assistant"}
             }],
             "usage": {"prompt_tokens": 200, "completion_tokens": 300, "total_tokens": 500}
         }
-    
-    def _mock_root_cause(self) -> Dict[str, Any]:
-        import json
+
+    def _mock_root_cause(self, context: str) -> Dict[str, Any]:
+        """Generate structured root cause analysis."""
         root_cause = {
             "root_cause": "Database connection pool exhaustion caused by undersized pool configuration (DB_POOL_SIZE=5)",
             "confidence": 0.92,
@@ -173,16 +273,15 @@ class MockAIProvider(AIProvider):
                 "rollback_plan": "Revert DB_POOL_SIZE to 5 in configuration"
             }
         }
-        # Return just the JSON without extra wrapper
         return {
             "choices": [{
-                "message": {"content": json.dumps(root_cause), "role": "assistant"}
+                "message": {"content": json.dumps(root_cause, separators=(',', ':')), "role": "assistant"}
             }],
             "usage": {"prompt_tokens": 300, "completion_tokens": 400, "total_tokens": 700}
         }
-    
-    def _mock_remediation(self) -> Dict[str, Any]:
-        import json
+
+    def _mock_remediation(self, context: str) -> Dict[str, Any]:
+        """Generate structured remediation plan."""
         remediation = {
             "type": "CONFIGURATION_CHANGE",
             "description": "Increase database connection pool size from 5 to 30 to handle concurrent request load",
@@ -198,7 +297,7 @@ class MockAIProvider(AIProvider):
             }],
             "usage": {"prompt_tokens": 200, "completion_tokens": 200, "total_tokens": 400}
         }
-    
+
     async def health_check(self) -> ProviderInfo:
         return ProviderInfo(
             name="mock",
@@ -209,7 +308,7 @@ class MockAIProvider(AIProvider):
             model_available=True,
             inference_test=True
         )
-    
+
     async def test_inference(self, prompt: str = "Reply with exactly: COSKA_NEBIUS_OK") -> Dict[str, Any]:
         if "COSKA_NEBIUS_OK" in prompt:
             return {
@@ -224,14 +323,21 @@ class MockAIProvider(AIProvider):
             "response": "Mock response",
             "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}
         }
-    
+
     async def close(self):
         pass
 
 
+# =============================================================================
+# Nebius Token Factory Provider Implementation
+# =============================================================================
+
 class NebiusTokenFactoryProvider(AIProvider):
-    """Nebius Token Factory provider for Nemotron models."""
-    
+    """Production-ready Nebius Token Factory provider with bounded retry and error states."""
+
+    MAX_RETRIES = 2
+    RETRY_BACKOFFS = [1.0, 2.0]
+
     def __init__(
         self,
         api_key: str,
@@ -243,11 +349,13 @@ class NebiusTokenFactoryProvider(AIProvider):
         self.model = model
         self._client = None
         self._health_info: Optional[ProviderInfo] = None
-    
+
     @property
     def client(self):
         if self._client is None:
             import httpx
+            if not self.api_key or self.api_key == "your_nebius_token_factory_api_key_here":
+                raise ProviderNotConfiguredError("NEBIUS_API_KEY is not configured or is a placeholder")
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers={
@@ -257,7 +365,7 @@ class NebiusTokenFactoryProvider(AIProvider):
                 timeout=httpx.Timeout(120.0, connect=10.0),
             )
         return self._client
-    
+
     async def chat_completion(
         self,
         messages: List[Dict[str, str]],
@@ -266,77 +374,105 @@ class NebiusTokenFactoryProvider(AIProvider):
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> Dict[str, Any]:
+        """Send chat completion request with bounded 429 retries and explicit error handling."""
+        import httpx
+
         payload = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        
+
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice or "auto"
-        
+
         logger.debug("nebius_request", model=self.model, message_count=len(messages))
-        
-        response = await self.client.post("/chat/completions", json=payload)
-        response.raise_for_status()
-        
-        result = response.json()
-        logger.debug("nebius_response", model=self.model)
-        return result
-    
+
+        retries = 0
+        while True:
+            try:
+                response = await self.client.post("/chat/completions", json=payload)
+
+                # HTTP 429: Bounded retry
+                if response.status_code == 429:
+                    if retries < self.MAX_RETRIES:
+                        backoff = self.RETRY_BACKOFFS[retries]
+                        logger.warning("nebius_rate_limited_retrying", retry=retries + 1, backoff=backoff)
+                        await asyncio.sleep(backoff)
+                        retries += 1
+                        continue
+                    else:
+                        raise ProviderRateLimitedError("Rate limit exceeded on Nebius Token Factory after bounded retries")
+
+                # HTTP 401 / 403: Unauthorized
+                if response.status_code in (401, 403):
+                    raise ProviderUnauthorizedError(f"Nebius authentication failed: HTTP {response.status_code}")
+
+                # HTTP 404: Model not found
+                if response.status_code == 404:
+                    raise ModelUnavailableError(f"Model {self.model} not available on endpoint")
+
+                # HTTP 5xx: Service unavailable
+                if response.status_code >= 500:
+                    raise ProviderUnavailableError(f"Nebius service unavailable: HTTP {response.status_code}", status_code=response.status_code)
+
+                response.raise_for_status()
+
+                try:
+                    result = response.json()
+                except Exception as e:
+                    raise ProviderInvalidResponseError(f"Failed to parse JSON response: {e}")
+
+                if not result or not result.get("choices"):
+                    raise ProviderInvalidResponseError("Empty choices returned from model")
+
+                logger.debug("nebius_response_received", model=self.model)
+                return result
+
+            except httpx.ConnectError as e:
+                raise ProviderUnavailableError(f"Cannot connect to Nebius Token Factory: {e}")
+            except httpx.TimeoutException as e:
+                raise ProviderUnavailableError(f"Nebius Token Factory request timed out: {e}")
+            except ProviderError:
+                raise
+            except Exception as e:
+                raise ProviderError(f"Unexpected Nebius error: {e}")
+
     async def health_check(self) -> ProviderInfo:
         info = ProviderInfo(
             name="nebius",
             model=self.model,
             base_url=self.base_url
         )
-        
-        # Test reachability
+
+        if not self.api_key or self.api_key == "your_nebius_token_factory_api_key_here":
+            info.error = "PROVIDER_NOT_CONFIGURED"
+            self._health_info = info
+            return info
+
         try:
-            await self.client.get("/models", timeout=10.0)
+            await self.client.get("/models", timeout=5.0)
             info.reachable = True
         except Exception as e:
-            info.error = f"Provider unreachable: {e}"
+            info.error = f"PROVIDER_UNAVAILABLE: {e}"
             self._health_info = info
             return info
-        
-        # Test authentication
-        try:
-            result = await self.chat_completion(
-                messages=[{"role": "user", "content": "OK"}],
-                max_tokens=5,
-                temperature=0
-            )
-            info.authenticated = True
-        except Exception as e:
-            info.error = f"Authentication failed: {e}"
-            self._health_info = info
-            return info
-        
-        # Test model availability
-        try:
-            models_resp = await self.client.get("/models")
-            models_data = models_resp.json()
-            model_ids = [m.get("id", "") for m in models_data.get("data", [])]
-            info.model_available = self.model in model_ids or any(self.model in m for m in model_ids)
-        except Exception:
-            # Some endpoints may not support /models
-            info.model_available = True  # Assume available if auth works
-        
-        # Test inference
+
         try:
             test_result = await self.test_inference()
+            info.authenticated = test_result.get("success", False)
             info.inference_test = test_result.get("success", False)
-            if not info.inference_test:
-                info.error = test_result.get("error", "Inference test failed")
+            info.model_available = True
+            if not info.authenticated:
+                info.error = test_result.get("error", "PROVIDER_UNAUTHORIZED")
         except Exception as e:
-            info.error = f"Inference test error: {e}"
-        
+            info.error = str(e)
+
         self._health_info = info
         return info
-    
+
     async def test_inference(self, prompt: str = "Reply with exactly: COSKA_NEBIUS_OK") -> Dict[str, Any]:
         try:
             result = await self.chat_completion(
@@ -356,66 +492,69 @@ class NebiusTokenFactoryProvider(AIProvider):
         except Exception as e:
             logger.error("nebius_test_inference_failed", error=str(e))
             return {"success": False, "error": str(e)}
-    
+
     async def close(self):
         if self._client:
             await self._client.aclose()
             self._client = None
 
 
+# =============================================================================
+# Factory and Registry
+# =============================================================================
+
 def create_provider(provider_type: str = "auto", **kwargs) -> AIProvider:
     """Factory function to create AI provider based on configuration."""
+    model = kwargs.get("model") or get_settings().nebius_model
+
     if provider_type == "mock":
-        return MockAIProvider(kwargs.get("model", "mock-model"))
-    
+        return MockAIProvider(model=model)
+
     if provider_type == "nebius":
         api_key = kwargs.get("api_key")
-        if not api_key:
+        if not api_key or api_key == "your_nebius_token_factory_api_key_here":
             logger.warning("nebius_api_key_missing_falling_back_to_mock")
-            return MockAIProvider()
+            return MockAIProvider(model=model)
         return NebiusTokenFactoryProvider(
             api_key=api_key,
-            base_url=kwargs.get("base_url", "https://api.tokenfactory.us-central1.nebius.com/v1/"),
-            model=kwargs.get("model", "nvidia/nemotron-3-ultra-550b-a55b")
+            base_url=kwargs.get("base_url") or get_settings().nebius_base_url,
+            model=model
         )
-    
-    # Auto-detect: try nebius if key available, else mock
+
+    # Auto-detect: if valid api key present, use nebius, else fallback to mock
     if provider_type == "auto":
-        api_key = kwargs.get("api_key") or kwargs.get("nebius_api_key")
-        if api_key:
+        api_key = kwargs.get("api_key") or kwargs.get("nebius_api_key") or get_settings().nebius_api_key
+        if api_key and api_key != "your_nebius_token_factory_api_key_here":
             return NebiusTokenFactoryProvider(
                 api_key=api_key,
-                base_url=kwargs.get("base_url", "https://api.tokenfactory.us-central1.nebius.com/v1/"),
-                model=kwargs.get("model", "nvidia/nemotron-3-ultra-550b-a55b")
+                base_url=kwargs.get("base_url") or get_settings().nebius_base_url,
+                model=model
             )
-        return MockAIProvider()
-    
+        return MockAIProvider(model=model)
+
     raise ValueError(f"Unknown provider type: {provider_type}")
 
 
-# Provider singleton for dependency injection
 _provider_instance: Optional[AIProvider] = None
 
 
 def get_provider(provider_type: Optional[str] = None, **kwargs) -> AIProvider:
-    """Get or create provider instance based on settings."""
+    """Get or create singleton provider instance based on settings."""
     global _provider_instance
-    
-    if _provider_instance is not None:
+
+    if _provider_instance is not None and provider_type is None:
         return _provider_instance
-    
+
     settings = get_settings()
-    
-    # Determine provider type
-    if provider_type is None:
-        provider_type = settings.ai_provider
-    
-    # Build kwargs from settings and overrides
+    active_type = provider_type or settings.ai_provider
+
     provider_kwargs = {
         "api_key": kwargs.get("api_key", settings.nebius_api_key),
         "base_url": kwargs.get("base_url", settings.nebius_base_url),
         "model": kwargs.get("model", settings.nebius_model),
     }
-    
-    _provider_instance = create_provider(provider_type, **provider_kwargs)
-    return _provider_instance
+
+    instance = create_provider(active_type, **provider_kwargs)
+    if provider_type is None:
+        _provider_instance = instance
+    return instance

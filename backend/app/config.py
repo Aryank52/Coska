@@ -33,12 +33,22 @@ class Settings(BaseSettings):
     vite_api_url: str = "http://localhost:8000"
     
     # Sandbox
+    sandbox_mode: str = "local"  # local, docker, auto
     sandbox_timeout: int = 300
     sandbox_memory_limit: str = "512m"
     sandbox_cpu_limit: float = 1.0
     
     # AI Provider
-    ai_provider: str = "nebius"  # auto, mock, nebius
+    ai_provider: str = "mock"  # auto, mock, nebius
+    
+    # Logging & Observability
+    log_level: str = "INFO"
+    
+    # Agent Safety Limits
+    max_agent_steps: int = 40
+    max_tool_calls: int = 25
+    max_retries: int = 3
+    max_investigation_time: int = 300
     
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),

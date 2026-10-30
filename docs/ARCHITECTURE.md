@@ -97,18 +97,27 @@ COSKA (Autonomous Incident Intelligence & Verified Recovery) is a multi-componen
    - Risk assessment and rollback planning
 
 6. **Sandbox Engine** (`app/tools/sandbox.py`)
-   - Docker-based isolated execution
-   - Config changes, test execution, health checks
-   - Control verification (revert + re-test)
+   - Dual-mode architecture via `SandboxProvider` ABC:
+     - `DockerSandboxProvider` - Isolated container execution, memory/CPU quotas, bridge network, automatic container cleanup.
+     - `LocalSafeSandboxProvider` - Deterministic host fallback (Windows/macOS/Linux) with strict path traversal prevention, command allowlisting, environment credential sanitization, timeout enforcement, and automatic file rollback.
+   - Truthful reporting: accurately reports `docker` or `local_safe` without mislabeling local execution.
 
 7. **Verifier** (`app/agent/verifier.py`)
-   - Three-stage verification: Baseline → Post-Fix → Control
-   - Verdict: VERIFIED / FAILED / UNVERIFIED / INSUFFICIENT_EVIDENCE
+   - Three-stage causal verification: Baseline → Post-Fix → Control
+   - Exact Deterministic Verdict Matrix:
+     - Baseline FAIL + Post-Fix PASS + Health PASS + Control FAIL → `VERIFIED`
+     - Baseline FAIL + Post-Fix FAIL → `FAILED`
+     - Baseline FAIL + Post-Fix PASS + Control PASS (inconclusive fix) → `UNVERIFIED`
+     - Missing Baseline / No reproduce → `INSUFFICIENT_EVIDENCE`
 
-8. **Services**
-   - `NebiusClient` - OpenAI-compatible Nemotron 3 Ultra inference
-   - `TavilyClient` - Technical web research
-   - `StorageService` - SQLite persistence
+8. **AI Provider Abstraction** (`app/services/providers.py`)
+   - `MockAIProvider` - Deterministic mock provider producing typed schemas for all 8 phases.
+   - `NebiusTokenFactoryProvider` - Production-ready client for NVIDIA Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`) via Nebius Token Factory with bounded exponential-backoff 429 retries.
+   - Centralized error states: `PROVIDER_NOT_CONFIGURED`, `PROVIDER_UNAUTHORIZED`, `PROVIDER_RATE_LIMITED`, `PROVIDER_UNAVAILABLE`, `MODEL_UNAVAILABLE`, `PROVIDER_INVALID_RESPONSE`.
+
+9. **Services & Persistence**
+   - `TavilyClient` (`app/services/tavily.py`) - Real-time technical web research with graceful fallback if unconfigured.
+   - `StorageService` (`app/services/storage.py`) - SQLite persistence with dedicated schemas for `incidents`, `evidence`, `hypotheses`, `remediations`, `verification_results`, `agent_actions`, `investigations`, and `incident_memory`.
 
 **API Endpoints:**
 - `GET /api/health` - Basic health

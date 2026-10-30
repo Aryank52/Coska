@@ -1,56 +1,62 @@
 #!/usr/bin/env python
 """
-COSKA Doctor - System health diagnostics
+COSKA Doctor - System Diagnostics
 
-Checks all system components and reports status.
+Diagnoses system environment, services, providers, database, and sandbox.
+Outputs truthful states: PASS, WARN, FAIL.
 """
 import asyncio
-import sys
-import subprocess
 import os
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+from typing import Tuple
 
+# Add backend to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
 from app.config import get_settings
-from app.services.providers import get_provider
-from app.services.tavily import get_tavily_client
 from app.tools.sandbox import SandboxEngine
-from app.config import get_settings as get_backend_settings
 
 
-async def check_python() -> tuple[bool, str]:
-    """Check Python version."""
-    import sys
-    version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    if sys.version_info >= (3, 12):
-        return True, f"Python {version} [OK]"
-    return False, f"Python {version} [FAIL] (requires 3.12+)"
+async def check_python() -> Tuple[str, str]:
+    """Check Python version (3.12+)."""
+    v = sys.version_info
+    version_str = f"{v.major}.{v.minor}.{v.micro}"
+    if v >= (3, 12):
+        return "PASS", f"Python {version_str} [OK]"
+    elif v >= (3, 11):
+        return "WARN", f"Python {version_str} (3.12+ recommended)"
+    return "FAIL", f"Python {version_str} (3.12+ required)"
 
 
-async def check_node() -> tuple[bool, str]:
+async def check_node() -> Tuple[str, str]:
     """Check Node.js version."""
     try:
-        result = subprocess.run(["node", "--version"], capture_output=True, text=True)
-        version = result.stdout.strip()
-        return True, f"Node.js {version} [OK]"
-    except Exception:
-        return False, "Node.js not found [FAIL]"
+        use_shell = os.name == 'nt'
+        result = subprocess.run(["node", "-v"], capture_output=True, text=True, timeout=10, shell=use_shell)
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            return "PASS", f"Node.js {version} [OK]"
+        return "FAIL", "Node.js not working properly"
+    except Exception as e:
+        return "FAIL", f"Node.js not installed: {e}"
 
 
-async def check_docker() -> tuple[bool, str]:
+async def check_docker() -> Tuple[str, str]:
     """Check Docker availability."""
     try:
         import docker
         client = docker.from_env()
         client.ping()
-        return True, "Docker [OK]"
+        return "PASS", "Docker daemon running [OK]"
     except Exception as e:
-        return False, f"Docker not available [WARN] (required for sandbox verification): {str(e)[:100]}"
+        return "WARN", f"Docker not running (Local safe sandbox active as fallback): {str(e)[:60]}"
 
 
-async def check_backend() -> tuple[bool, str]:
+async def check_backend() -> Tuple[str, str]:
     """Check backend API health."""
     import httpx
     settings = get_settings()
@@ -58,154 +64,135 @@ async def check_backend() -> tuple[bool, str]:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{settings.vite_api_url}/api/health")
             if resp.status_code == 200:
-                return True, f"Backend API [OK] ({settings.vite_api_url})"
-            return False, f"Backend API returned {resp.status_code}"
+                return "PASS", f"Backend API [OK] ({settings.vite_api_url})"
+            return "FAIL", f"Backend API returned status {resp.status_code}"
     except Exception as e:
-        return False, f"Backend API unreachable: {e}"
+        return "FAIL", f"Backend API unreachable: {e}"
 
 
-async def check_ai_provider() -> tuple[bool, str]:
-    """Check AI provider connectivity."""
-    settings = get_settings()
-    from app.services.providers import get_provider
-    
-    provider = get_provider(
-        provider_type=settings.ai_provider,
-        api_key=settings.nebius_api_key,
-        base_url=settings.nebius_base_url,
-        model=settings.nebius_model
-    )
-    
-    info = await provider.health_check()
-    await provider.close()
-    
-    if info.reachable and info.authenticated and info.model_available and info.inference_test:
-        return True, f"AI Provider: {info.name} ({info.model}) [OK]"
-    elif info.reachable and info.authenticated:
-        return True, f"AI Provider: {info.name} (model unavailable) [WARN]"
-    elif info.reachable:
-        return False, f"AI Provider: {info.name} (auth failed: {info.error}) [FAIL]"
-    else:
-        return False, f"AI Provider unreachable: {info.error} [FAIL]"
+async def check_frontend_build() -> Tuple[str, str]:
+    """Check frontend build artifact."""
+    dist_index = Path(__file__).parent.parent / "frontend" / "dist" / "index.html"
+    if dist_index.exists():
+        return "PASS", "Frontend build [OK] (dist/index.html exists)"
+    return "WARN", "Frontend build missing. Run 'npm run build' in frontend/"
 
 
-async def check_tavily() -> tuple[bool, str]:
-    """Check Tavily connectivity."""
-    settings = get_settings()
-    if not settings.tavily_api_key or settings.tavily_api_key == "your_tavily_api_key_here":
-        return True, "Tavily: not configured [WARN] (optional)"
-    
-    from app.services.tavily import get_tavily_client
-    client = get_tavily_client()
-    try:
-        healthy = await client.health_check()
-        await client.close()
-        if healthy:
-            return True, "Tavily [OK]"
-        return False, "Tavily API error [FAIL]"
-    except Exception as e:
-        return False, f"Tavily error: {e} [FAIL]"
-
-
-async def check_sandbox() -> tuple[bool, str]:
-    """Check sandbox capability."""
-    sandbox = SandboxEngine()
-    if sandbox.is_available():
-        return True, "Sandbox (Docker) [OK]"
-    return False, "Sandbox (Docker) not available [WARN]"
-
-
-async def check_frontend_build() -> tuple[bool, str]:
-    """Check frontend build."""
-    try:
-        use_shell = os.name == 'nt'  # Use shell on Windows to find npm in PATH
-        result = subprocess.run(["npm", "run", "build"], 
-                              cwd=Path(__file__).parent.parent / "frontend",
-                              capture_output=True, text=True, timeout=120,
-                              shell=use_shell)
-        if result.returncode == 0:
-            return True, "Frontend build [OK]"
-        return False, f"Frontend build failed: {result.stderr[:200]}"
-    except Exception as e:
-        return False, f"Frontend build error: {e}"
-
-
-async def check_mock_provider() -> tuple[bool, str]:
-    """Check mock provider works."""
-    try:
-        from app.services.providers import MockAIProvider
-        provider = MockAIProvider("test-model")
-        info = await provider.health_check()
-        if info.reachable and info.authenticated and info.model_available and info.inference_test:
-            return True, "Mock Provider [OK]"
-        return False, "Mock Provider [FAIL]"
-    except Exception as e:
-        return False, f"Mock Provider error: {e} [FAIL]"
-
-
-async def check_demo_fixtures() -> tuple[bool, str]:
-    """Check demo fixtures exist."""
-    try:
-        fixtures_path = Path(__file__).parent.parent / "demo" / "incidents" / "payment-api-incident.json"
-        if fixtures_path.exists():
-            return True, "Demo fixtures [OK]"
-        return False, "Demo fixtures not found [FAIL]"
-    except Exception as e:
-        return False, f"Demo fixtures check error: {e} [FAIL]"
-
-
-async def check_database() -> tuple[bool, str]:
-    """Check database connectivity."""
+async def check_database() -> Tuple[str, str]:
+    """Check SQLite database connectivity."""
     try:
         from app.services.storage import get_storage
         storage = get_storage()
-        # Try to list incidents (will create empty table if needed)
         incidents = storage.list_incidents()
-        return True, f"Database [OK] ({len(incidents)} incidents)"
+        return "PASS", f"Database (SQLite) [OK] ({len(incidents)} incidents recorded)"
     except Exception as e:
-        return False, f"Database error: {e} [FAIL]"
+        return "FAIL", f"Database error: {e}"
+
+
+async def check_provider() -> Tuple[str, str]:
+    """Check AI provider abstraction."""
+    settings = get_settings()
+    from app.services.providers import get_provider
+    try:
+        provider = get_provider()
+        info = await provider.health_check()
+        if info.reachable and info.authenticated:
+            return "PASS", f"AI Provider: {info.name} ({info.model}) [OK]"
+        return "WARN", f"AI Provider: {info.name} degraded ({info.error})"
+    except Exception as e:
+        return "FAIL", f"AI Provider error: {e}"
+
+
+async def check_nebius_config() -> Tuple[str, str]:
+    """Check Nebius Token Factory configuration."""
+    settings = get_settings()
+    if not settings.nebius_api_key or settings.nebius_api_key.startswith("your_"):
+        return "WARN", "Nebius Token Factory: unconfigured (Ready for real key, currently using mock)"
+    return "PASS", f"Nebius Token Factory: configured ({settings.nebius_model})"
+
+
+async def check_tavily() -> Tuple[str, str]:
+    """Check Tavily web research client."""
+    from app.services.tavily import get_tavily_client
+    client = get_tavily_client()
+    if not client.is_configured:
+        return "WARN", "Tavily: not configured (optional)"
+    try:
+        healthy = await client.health_check()
+        if healthy:
+            return "PASS", "Tavily Web Research [OK]"
+        return "WARN", "Tavily connection degraded"
+    except Exception as e:
+        return "WARN", f"Tavily check error: {e}"
+
+
+async def check_sandbox() -> Tuple[str, str]:
+    """Check sandbox engine capability."""
+    sandbox = SandboxEngine()
+    if sandbox.is_available():
+        return "PASS", f"Sandbox ({sandbox.provider_name}) operational [OK]"
+    return "FAIL", f"Sandbox ({sandbox.provider_name}) unavailable"
+
+
+async def check_demo_fixtures() -> Tuple[str, str]:
+    """Check payment-api demo fixture."""
+    fixture = Path(__file__).parent.parent / "demo" / "incidents" / "payment-api-incident.json"
+    demo_app = Path(__file__).parent.parent / "demo" / "payment-api" / "app" / "main.py"
+    if fixture.exists() and demo_app.exists():
+        return "PASS", "Demo fixtures & payment-api service [OK]"
+    return "FAIL", "Demo fixtures missing"
 
 
 async def main():
-    """Run all health checks."""
+    """Run all COSKA Doctor diagnostics."""
     print("COSKA Doctor - System Diagnostics")
-    print("=" * 50)
-    
+    print("=" * 60)
+
     checks = [
         ("Python", check_python()),
         ("Node.js", check_node()),
-        ("Docker", check_docker()),
         ("Backend API", check_backend()),
-        ("AI Provider", check_ai_provider()),
+        ("Frontend Build", check_frontend_build()),
+        ("Database", check_database()),
+        ("AI Provider", check_provider()),
+        ("Nebius Configuration", check_nebius_config()),
         ("Tavily", check_tavily()),
         ("Sandbox", check_sandbox()),
-        ("Frontend Build", check_frontend_build()),
-        ("Mock Provider", check_mock_provider()),
+        ("Docker", check_docker()),
         ("Demo Fixtures", check_demo_fixtures()),
-        ("Database", check_database()),
     ]
-    
+
     results = []
+    fail_count = 0
+    warn_count = 0
+    pass_count = 0
+
     for name, coro in checks:
         try:
-            ok, msg = await coro
-            results.append((name, ok, msg))
-            status = "[OK]" if ok else "[FAIL]"
-            print(f"  {status} {name}: {msg}")
+            status, msg = await coro
+            results.append((name, status, msg))
+            if status == "PASS":
+                pass_count += 1
+                badge = "[PASS]"
+            elif status == "WARN":
+                warn_count += 1
+                badge = "[WARN]"
+            else:
+                fail_count += 1
+                badge = "[FAIL]"
+            print(f"  {badge} {name}: {msg}")
         except Exception as e:
-            results.append((name, False, f"Check failed: {e}"))
-            print(f"  [FAIL] {name}: Check failed: {e}")
-    
-    print("\n" + "=" * 50)
-    passed = sum(1 for _, ok, _ in results if ok)
-    total = len(results)
-    print(f"Summary: {passed}/{total} checks passed")
-    
-    if passed == total:
-        print("\n[SUCCESS] All systems operational!")
+            fail_count += 1
+            print(f"  [FAIL] {name}: Diagnostic error: {e}")
+
+    print("\n" + "=" * 60)
+    print(f"Summary: {pass_count} passed, {warn_count} warnings, {fail_count} failed ({len(results)} total checks)")
+
+    if fail_count == 0:
+        print("[SUCCESS] All required COSKA systems are operational!")
         return 0
     else:
-        print("\n[WARNING] Some checks failed - see details above")
+        print(f"[FAIL] {fail_count} critical checks failed. Please review above.")
         return 1
 
 

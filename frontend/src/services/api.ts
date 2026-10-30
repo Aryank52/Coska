@@ -29,3 +29,5 @@ export const getVerificationReport = (id: string) => api.get(`/incidents/${id}/r
 // Health
 export const healthCheck = () => api.get('/health').then(r => r.data)
 export const aiHealthCheck = () => api.get('/health/ai').then(r => r.data)
+export const tavilyHealthCheck = () => api.get('/health/tavily').then(r => r.data)
+export const sandboxHealthCheck = () => api.get('/health/sandbox').then(r => r.data)

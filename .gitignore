@@ -56,3 +56,18 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+
+# Secrets & Certificates
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+credentials
+secrets
+
+# Python virtualenvs & test cache
+.venv/
+.venv
+.pytest_cache/
+.pytest_cache

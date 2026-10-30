@@ -1,10 +1,12 @@
 """Storage service for persisting incidents and investigations."""
 import json
 import sqlite3
+import uuid
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 from contextlib import contextmanager
 import structlog
+from datetime import datetime, timezone
 
 from app.models import Incident, Evidence, Hypothesis, Remediation, VerificationResult, AgentAction
 from app.config import get_settings
@@ -112,6 +114,16 @@ class StorageService:
                     FOREIGN KEY (incident_id) REFERENCES incidents(id)
                 );
                 
+                CREATE TABLE IF NOT EXISTS investigations (
+                    id TEXT PRIMARY KEY,
+                    incident_id TEXT NOT NULL,
+                    current_phase TEXT NOT NULL,
+                    state_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (incident_id) REFERENCES incidents(id)
+                );
+                
                 CREATE TABLE IF NOT EXISTS incident_memory (
                     id TEXT PRIMARY KEY,
                     service TEXT NOT NULL,
@@ -126,6 +138,8 @@ class StorageService:
                 CREATE INDEX IF NOT EXISTS idx_evidence_incident ON evidence(incident_id);
                 CREATE INDEX IF NOT EXISTS idx_hypotheses_incident ON hypotheses(incident_id);
                 CREATE INDEX IF NOT EXISTS idx_actions_incident ON agent_actions(incident_id);
+                CREATE INDEX IF NOT EXISTS idx_investigations_incident ON investigations(incident_id);
+                CREATE INDEX IF NOT EXISTS idx_memory_service ON incident_memory(service);
             """)
     
     @contextmanager
@@ -298,6 +312,39 @@ class StorageService:
                 created_at=row["created_at"]
             )
     
+    # Investigation state operations
+    def save_investigation(
+        self,
+        incident_id: str,
+        current_phase: str,
+        state_data: Dict[str, Any],
+        run_id: Optional[str] = None
+    ) -> None:
+        """Persist complete serialized investigation state."""
+        run_id = run_id or f"RUN-{incident_id}"
+        now = datetime.now(timezone.utc).isoformat()
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO investigations
+                (id, incident_id, current_phase, state_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM investigations WHERE id = ?), ?), ?)
+            """, (
+                run_id, incident_id, current_phase, json.dumps(state_data, default=str),
+                run_id, now, now
+            ))
+
+    def get_investigation_state(self, incident_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve most recent investigation state for an incident."""
+        with self._conn() as conn:
+            row = conn.execute("""
+                SELECT state_json FROM investigations 
+                WHERE incident_id = ? 
+                ORDER BY updated_at DESC LIMIT 1
+            """, (incident_id,)).fetchone()
+            if not row or not row["state_json"]:
+                return None
+            return json.loads(row["state_json"])
+
     # Agent action operations
     def save_actions(self, actions: List[AgentAction]) -> None:
         with self._conn() as conn:
@@ -334,10 +381,10 @@ class StorageService:
                 (id, service, symptoms, root_cause, evidence, remediation, verification_result, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                f"MEM-{__import__('uuid').uuid4().hex[:8].upper()}",
+                f"MEM-{uuid.uuid4().hex[:8].upper()}",
                 service, symptoms, root_cause,
                 json.dumps(evidence), json.dumps(remediation), json.dumps(verification),
-                __import__('datetime').datetime.utcnow().isoformat()
+                datetime.now(timezone.utc).isoformat()
             ))
     
     def search_incident_memory(self, service: str, symptoms: str) -> List[Dict]:

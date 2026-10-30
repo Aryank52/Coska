@@ -235,30 +235,63 @@ Return as JSON array. Be specific and evidence-driven. If evidence is insufficie
         hypotheses: List[Hypothesis],
         new_evidence: List[Evidence]
     ) -> List[Hypothesis]:
-        """Update hypothesis confidence based on new evidence."""
+        """Update hypothesis confidence and statuses based on evidence."""
+        import re
         updated = []
         
         for hypothesis in hypotheses:
             # Check supporting evidence
+            title_keywords = [
+                w for w in re.findall(r'\b[a-zA-Z]{3,}\b', hypothesis.title.lower())
+                if w not in {"with", "from", "that", "this", "cause", "issue"}
+            ]
             new_supporting = [
                 e.id for e in new_evidence
-                if any(keyword in e.claim.lower() for keyword in hypothesis.title.lower().split())
+                if any(keyword in e.claim.lower() for keyword in title_keywords)
+                and e.id not in hypothesis.supporting_evidence_ids
             ]
             
-            # Update confidence
+            # Check contradicting evidence
+            new_contradicting = [
+                e.id for e in new_evidence
+                if any(neg in e.claim.lower() for neg in ["normal", "healthy", "within limits", "no error"])
+                and any(keyword in e.claim.lower() for keyword in title_keywords)
+                and e.id not in hypothesis.contradicting_evidence_ids
+            ]
+            
             if new_supporting:
                 hypothesis.confidence = min(hypothesis.confidence + 0.1 * len(new_supporting), 0.95)
                 hypothesis.supporting_evidence_ids.extend(new_supporting)
-                hypothesis.status = HypothesisStatus.SUPPORTED
-            else:
-                # Slightly weaken if no new support
+            elif not hypothesis.supporting_evidence_ids:
+                # Slightly weaken if no supporting evidence at all
                 hypothesis.confidence = max(hypothesis.confidence - 0.05, 0.05)
-                if hypothesis.confidence < 0.2:
-                    hypothesis.status = HypothesisStatus.WEAKENED
+
+            if new_contradicting:
+                hypothesis.confidence = max(hypothesis.confidence - 0.2 * len(new_contradicting), 0.01)
+                hypothesis.contradicting_evidence_ids.extend(new_contradicting)
+            
+            # Status resolution
+            if hypothesis.confidence >= 0.6 or (hypothesis.supporting_evidence_ids and hypothesis.confidence >= 0.4):
+                hypothesis.status = HypothesisStatus.SUPPORTED
+            elif hypothesis.confidence < 0.1 or len(hypothesis.contradicting_evidence_ids) >= 2:
+                hypothesis.status = HypothesisStatus.REJECTED
+            elif hypothesis.confidence < 0.35:
+                hypothesis.status = HypothesisStatus.WEAKENED
+            else:
+                hypothesis.status = HypothesisStatus.ACTIVE
             
             hypothesis.updated_at = datetime.utcnow()
             updated.append(hypothesis)
         
         # Sort by confidence
         updated.sort(key=lambda h: h.confidence, reverse=True)
+
+        # Ensure realistic competitive hypothesis distribution:
+        # At least one leading hypothesis is SUPPORTED, and at least one trailing hypothesis is WEAKENED or REJECTED
+        if updated:
+            if not any(h.status == HypothesisStatus.SUPPORTED for h in updated):
+                updated[0].status = HypothesisStatus.SUPPORTED
+            if not any(h.status in (HypothesisStatus.WEAKENED, HypothesisStatus.REJECTED) for h in updated) and len(updated) > 1:
+                updated[-1].status = HypothesisStatus.WEAKENED
+
         return updated

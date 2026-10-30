@@ -1,7 +1,7 @@
 """Investigations API endpoints."""
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-from typing import Optional
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
 import structlog
 
 from app.api.dependencies import get_orchestrator
@@ -12,56 +12,63 @@ router = APIRouter()
 
 
 class InvestigateRequest(BaseModel):
-    incident_id: str
     auto_approve: bool = False
+    run_id: Optional[str] = None
 
 
 class InvestigateResponse(BaseModel):
     incident_id: str
     status: str
     message: str
+    run_id: Optional[str] = None
 
 
-@router.post("/incidents/{incident_id}/investigate", response_model=InvestigateResponse)
-async def investigate_incident(incident_id: str, request: InvestigateRequest):
-    """Start investigation for an incident."""
+@router.get("/incidents/{incident_id}/investigation")
+async def get_investigation_state(incident_id: str):
+    """Get full investigation state including phase, timeline, and results."""
     orchestrator = get_orchestrator()
     storage = get_storage()
-    incident = storage.get_incident(incident_id)
     
-    if not incident:
-        raise HTTPException(status_code=404, detail="Incident not found")
+    state = orchestrator.get_investigation(incident_id)
+    if state:
+        return state.to_dict()
     
-    # Run investigation
-    state = await orchestrator.investigate(incident, request.auto_approve)
+    persisted = storage.get_investigation_state(incident_id)
+    if persisted:
+        return persisted
     
-    return InvestigateResponse(
-        incident_id=incident_id,
-        status="completed",
-        message=f"Investigation completed with {len(state.hypotheses)} hypotheses"
-    )
+    raise HTTPException(status_code=404, detail="Investigation not found for this incident")
 
 
-@router.post("/incidents/{incident_id}/simulate-fix")
-async def simulate_fix(incident_id: str):
-    """Simulate a fix in sandbox."""
-    storage = get_storage()
-    remediation = storage.get_remediation(incident_id)
-    if not remediation:
-        raise HTTPException(status_code=404, detail="No remediation to simulate")
-    
-    return {"incident_id": incident_id, "status": "simulated", "message": "Fix simulated (stub)"}
-
-
-@router.post("/incidents/{incident_id}/apply-fix")
-async def apply_fix(incident_id: str):
-    """Apply fix to sandbox."""
-    storage = get_storage()
-    incident = storage.get_incident(incident_id)
-    if not incident:
-        raise HTTPException(status_code=404, detail="Incident not found")
-    
+@router.get("/incidents/{incident_id}/state")
+async def get_investigation_summary(incident_id: str):
+    """Get summary of current investigation progress."""
     orchestrator = get_orchestrator()
-    state = await orchestrator.investigate(incident, True)
-    
-    return {"incident_id": incident_id, "status": "applied", "message": "Fix applied and verified"}
+    state = orchestrator.get_investigation(incident_id)
+    if not state:
+        storage = get_storage()
+        persisted = storage.get_investigation_state(incident_id)
+        if persisted:
+            return {
+                "incident_id": incident_id,
+                "current_phase": persisted.get("current_phase"),
+                "hypotheses_count": len(persisted.get("hypotheses", [])),
+                "evidence_count": len(persisted.get("evidence", [])),
+                "has_root_cause": bool(persisted.get("root_cause")),
+                "has_remediation": bool(persisted.get("remediation")),
+                "verdict": persisted.get("verification_result", {}).get("verdict") if persisted.get("verification_result") else None
+            }
+        raise HTTPException(status_code=404, detail="Investigation state not found")
+
+    return {
+        "incident_id": incident_id,
+        "run_id": state.run_id,
+        "current_phase": state.current_phase.value,
+        "step_count": state.step_count,
+        "hypotheses_count": len(state.hypotheses),
+        "evidence_count": len(state.evidence),
+        "has_root_cause": bool(state.root_cause),
+        "has_remediation": bool(state.remediation),
+        "verdict": state.verification.verdict.value if state.verification else None,
+        "errors": state.errors
+    }

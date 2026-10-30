@@ -20,15 +20,35 @@ All secrets are stored in `.env` file (gitignored):
 
 ## Sandbox Execution Security
 
-### Docker Isolation
-- Remediation execution occurs in ephemeral Docker containers
-- Containers have:
-  - No host network access (`network_mode: none` or isolated bridge)
-  - No host filesystem access (bind-mounted temp directory only)
-  - Memory limit: 512MB (configurable)
-  - CPU limit: 1 core (configurable)
-  - Execution timeout: 300 seconds (configurable)
-  - No production credentials or environment variables
+### Dual Sandbox Architecture
+COSKA supports two isolated execution providers via `SandboxProvider`:
+
+1. **Docker Sandbox (`DockerSandboxProvider`)**:
+   - Remediation execution occurs in ephemeral Docker containers
+   - Containers have:
+     - No host network access (`network_mode: none` or isolated bridge)
+     - No host filesystem access (bind-mounted temp directory only)
+     - Memory limit: 512MB (configurable)
+     - CPU limit: 1 core (configurable)
+     - Execution timeout: 300 seconds (configurable)
+     - No production credentials or environment variables
+     - Guaranteed container cleanup on completion or failure
+
+2. **Local Safe Sandbox (`LocalSafeSandboxProvider`)**:
+   - Host fallback for environments where Docker Desktop is not present
+   - Strict path traversal prevention: rejects all paths traversing outside repo root (`..`, absolute paths, symlinks)
+   - Strict command allowlisting: permits only approved test/build runners (`pytest`, `python -m unittest`, `npm test`)
+   - Environment sanitization: clears credentials (`*_KEY`, `*_SECRET`, `*_PASSWORD`, `*_TOKEN`, `AWS_*`, `GOOGLE_*`)
+   - Enforced process timeouts
+   - Guaranteed file rollback to capture clean state before and after execution
+
+### Agent Safety Bounds
+To prevent runaway execution and infinite loops:
+- `MAX_AGENT_STEPS`: Max orchestrator steps (default: 20)
+- `MAX_TOOL_CALLS`: Max tool executions per investigation (default: 15)
+- `MAX_RETRIES`: Bounded retries for external providers (default: 2)
+- `MAX_INVESTIGATION_TIME`: Wall-clock timeout (default: 180 seconds)
+- When any bound is breached, the investigation terminates gracefully with status `INVESTIGATION_LIMIT_REACHED`.
 
 ### Command Allowlisting
 Only these operations are permitted in sandbox:

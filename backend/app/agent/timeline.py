@@ -1,5 +1,10 @@
-"""Timeline builder for incident timeline construction."""
-from datetime import datetime
+"""Timeline builder for incident timeline construction.
+
+Handles missing timestamps, unsorted events, duplicate timestamps, and missing raw data.
+Produces structured events representing:
+healthy → change → anomaly → escalation → incident → investigation → recovery.
+"""
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 import structlog
@@ -23,91 +28,140 @@ class TimelineEvent:
 
 class TimelineBuilder:
     """Builds incident timeline from evidence and metadata."""
-    
-    def build(self, incident: Incident, evidence: List[Evidence]) -> List[TimelineEvent]:
-        """Build chronological timeline from incident and evidence."""
-        events = []
-        
-        # Last healthy state (estimated from incident creation - some buffer)
-        if incident.created_at:
-            events.append(TimelineEvent(
-                timestamp=incident.created_at,
-                event_type="INCIDENT_REPORTED",
-                title="Incident Reported",
-                description=incident.description,
-                source_type=SourceType.RUNTIME,
-                severity="HIGH"
-            ))
-        
-        # Deployment events
-        deployment_evidence = [e for e in evidence if e.source_type == SourceType.DEPLOYMENT]
+
+    def build(self, incident: Optional[Incident], evidence: Optional[List[Evidence]]) -> List[TimelineEvent]:
+        """Build chronological timeline with robustness against None/missing/unsorted data."""
+        if incident is None:
+            return []
+
+        evidence = evidence or []
+        events: List[TimelineEvent] = []
+
+        now = datetime.now(timezone.utc)
+        base_time = incident.created_at if incident.created_at else now
+        if base_time.tzinfo is None:
+            base_time = base_time.replace(tzinfo=timezone.utc)
+
+        # 1. HEALTHY: Pre-incident healthy baseline (10 mins before incident or deploy)
+        healthy_time = base_time - timedelta(minutes=10)
+        events.append(TimelineEvent(
+            timestamp=healthy_time,
+            event_type="HEALTHY",
+            title="System Operational (Baseline)",
+            description=f"Service {incident.service} operating within normal thresholds prior to incident.",
+            source_type=SourceType.RUNTIME,
+            severity="LOW"
+        ))
+
+        # 2. CHANGE: Deployments
+        deployment_evidence = [e for e in evidence if e and e.source_type == SourceType.DEPLOYMENT]
         for ev in deployment_evidence:
             raw_data = ev.raw_data or {}
-            if 'version' in raw_data:
-                events.append(TimelineEvent(
-                    timestamp=ev.timestamp,
-                    event_type="DEPLOYMENT",
-                    title=f"Deployment {raw_data.get('version', 'unknown')}",
-                    description=ev.claim,
-                    source_type=SourceType.DEPLOYMENT,
-                    evidence_ids=[ev.id],
-                    severity="MEDIUM"
-                ))
-        
-        # Configuration changes
-        config_evidence = [e for e in evidence if e.source_type == SourceType.CONFIG]
-        for ev in config_evidence:
+            ev_time = ev.timestamp if ev.timestamp else (base_time - timedelta(minutes=5))
+            if ev_time.tzinfo is None:
+                ev_time = ev_time.replace(tzinfo=timezone.utc)
             events.append(TimelineEvent(
-                timestamp=ev.timestamp,
-                event_type="CONFIG_CHANGE",
-                title="Configuration Change Detected",
-                description=ev.claim,
-                source_type=SourceType.CONFIG,
-                evidence_ids=[ev.id],
+                timestamp=ev_time,
+                event_type="DEPLOYMENT",
+                title=f"Deployment {raw_data.get('version', 'new version')}",
+                description=ev.claim or "Deployment detected",
+                source_type=SourceType.DEPLOYMENT,
+                evidence_ids=[ev.id] if ev.id else [],
                 severity="MEDIUM"
             ))
-        
-        # First anomalies from logs
-        log_evidence = [e for e in evidence if e.source_type == SourceType.LOG]
+
+        # 2b. CHANGE: Config Changes
+        config_evidence = [e for e in evidence if e and e.source_type == SourceType.CONFIG]
+        for ev in config_evidence:
+            ev_time = ev.timestamp if ev.timestamp else (base_time - timedelta(minutes=4))
+            if ev_time.tzinfo is None:
+                ev_time = ev_time.replace(tzinfo=timezone.utc)
+            events.append(TimelineEvent(
+                timestamp=ev_time,
+                event_type="CONFIG_CHANGE",
+                title="Configuration Applied",
+                description=ev.claim or "Configuration parameters recorded",
+                source_type=SourceType.CONFIG,
+                evidence_ids=[ev.id] if ev.id else [],
+                severity="MEDIUM"
+            ))
+
+        # 3. ANOMALY: First anomalies from logs
+        log_evidence = [e for e in evidence if e and e.source_type == SourceType.LOG]
+        anomaly_seen = False
         for ev in log_evidence:
-            if 'pool' in ev.claim.lower() or 'timeout' in ev.claim.lower() or 'error' in ev.claim.lower():
+            claim_lower = (ev.claim or "").lower()
+            if any(term in claim_lower for term in ("error", "timeout", "pool", "fail", "slow", "500")):
+                ev_time = ev.timestamp if ev.timestamp else (base_time - timedelta(minutes=2))
+                if ev_time.tzinfo is None:
+                    ev_time = ev_time.replace(tzinfo=timezone.utc)
                 events.append(TimelineEvent(
-                    timestamp=ev.timestamp,
+                    timestamp=ev_time,
                     event_type="FIRST_ANOMALY",
                     title="First Anomaly Detected",
                     description=ev.claim,
                     source_type=SourceType.LOG,
-                    evidence_ids=[ev.id],
+                    evidence_ids=[ev.id] if ev.id else [],
                     severity="HIGH"
                 ))
-                break  # Only first anomaly
-        
-        # Error escalation
+                anomaly_seen = True
+                break
+
+        # 4. ESCALATION: Repeated failures / exhaustion
         for ev in log_evidence:
-            if 'exhaust' in ev.claim.lower() or '5xx' in ev.claim or 'pool' in ev.claim.lower():
+            claim_lower = (ev.claim or "").lower()
+            if any(term in claim_lower for term in ("exhaust", "5xx", "saturation", "cascade")):
+                ev_time = ev.timestamp if ev.timestamp else (base_time - timedelta(minutes=1))
+                if ev_time.tzinfo is None:
+                    ev_time = ev_time.replace(tzinfo=timezone.utc)
                 events.append(TimelineEvent(
-                    timestamp=ev.timestamp,
+                    timestamp=ev_time,
                     event_type="ERROR_ESCALATION",
-                    title="Error Escalation",
+                    title="Error Rate Escalation",
                     description=ev.claim,
                     source_type=SourceType.LOG,
-                    evidence_ids=[ev.id],
+                    evidence_ids=[ev.id] if ev.id else [],
                     severity="CRITICAL"
                 ))
-        
-        # Current incident state
+
+        # 5. INCIDENT: Incident reported / intake
         events.append(TimelineEvent(
-            timestamp=datetime.utcnow(),
-            event_type="CURRENT_STATE",
-            title="Current Incident State",
-            description=f"Incident {incident.id} under investigation",
+            timestamp=base_time,
+            event_type="INCIDENT_REPORTED",
+            title=f"Incident {incident.id} Declared",
+            description=incident.description or "Incident reported",
+            source_type=SourceType.RUNTIME,
+            severity="HIGH"
+        ))
+
+        # 6. INVESTIGATION: Investigation initiated
+        investigation_time = base_time + timedelta(seconds=15)
+        events.append(TimelineEvent(
+            timestamp=investigation_time,
+            event_type="INVESTIGATION_STARTED",
+            title="Autonomous Investigation Initiated",
+            description="COSKA agent began evidence gathering and timeline correlation.",
             source_type=SourceType.RUNTIME,
             severity="INFO"
         ))
-        
-        # Sort by timestamp
-        events.sort(key=lambda e: e.timestamp)
-        
+
+        # 7. CURRENT STATE / RECOVERY
+        events.append(TimelineEvent(
+            timestamp=now,
+            event_type="CURRENT_STATE",
+            title="Investigation & Recovery Phase",
+            description=f"Status: {incident.status.value if hasattr(incident.status, 'value') else str(incident.status)}",
+            source_type=SourceType.RUNTIME,
+            severity="INFO"
+        ))
+
+        # De-duplicate timestamps by adding stable microsecond offsets
+        # and sort chronologically
+        events.sort(key=lambda e: (e.timestamp, e.event_type))
+        for idx in range(1, len(events)):
+            if events[idx].timestamp <= events[idx - 1].timestamp:
+                events[idx].timestamp = events[idx - 1].timestamp + timedelta(microseconds=1000)
+
         logger.info("timeline_built", incident_id=incident.id, events=len(events))
         return events
 
@@ -120,7 +174,7 @@ def format_timeline_for_display(events: List[TimelineEvent]) -> List[Dict[str, A
             "event_type": e.event_type,
             "title": e.title,
             "description": e.description,
-            "source_type": e.source_type.value,
+            "source_type": e.source_type.value if hasattr(e.source_type, "value") else str(e.source_type),
             "evidence_ids": e.evidence_ids,
             "severity": e.severity
         }

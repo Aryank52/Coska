@@ -152,3 +152,38 @@ class AgentAction(BaseModel):
     input_data: Dict[str, Any] = Field(default_factory=dict)
     output_data: Dict[str, Any] = Field(default_factory=dict)
     error: Optional[str] = None
+
+
+class InvestigationPhase(str, Enum):
+    INCIDENT_INTAKE = "INCIDENT_INTAKE"
+    EVIDENCE_COLLECTION = "EVIDENCE_COLLECTION"
+    TIMELINE_BUILD = "TIMELINE_BUILD"
+    HYPOTHESIS_GENERATION = "HYPOTHESIS_GENERATION"
+    INVESTIGATION = "INVESTIGATION"
+    ROOT_CAUSE = "ROOT_CAUSE"
+    REMEDIATION = "REMEDIATION"
+    VERIFICATION = "VERIFICATION"
+
+
+class InvestigationStateModel(BaseModel):
+    run_id: str = Field(default_factory=lambda: f"RUN-{uuid.uuid4().hex[:8].upper()}")
+    incident_id: str
+    current_phase: InvestigationPhase = InvestigationPhase.INCIDENT_INTAKE
+    incident: Incident
+    timeline: List[Dict[str, Any]] = Field(default_factory=list)
+    evidence: List[Evidence] = Field(default_factory=list)
+    hypotheses: List[Hypothesis] = Field(default_factory=list)
+    tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    tool_results: List[Dict[str, Any]] = Field(default_factory=list)
+    web_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    root_cause: Optional[Dict[str, Any]] = None
+    remediation: Optional[Remediation] = None
+    sandbox_result: Optional[Dict[str, Any]] = None
+    test_results: Optional[Dict[str, Any]] = None
+    verification_result: Optional[VerificationResult] = None
+    errors: List[str] = Field(default_factory=list)
+    actions: List[AgentAction] = Field(default_factory=list)
+    original_config: str = ""
+    config_file: str = ".env"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

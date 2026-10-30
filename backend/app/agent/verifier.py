@@ -1,5 +1,6 @@
 """Verifier for three-stage verification."""
-from typing import Dict, Any, List
+import os
+from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import structlog
 
@@ -157,29 +158,40 @@ class Verifier:
     
     def _determine_verdict(
         self,
-        baseline: SandboxResult,
-        post_fix: SandboxResult,
-        health: SandboxResult,
-        control: SandboxResult
+        baseline: Optional[SandboxResult],
+        post_fix: Optional[SandboxResult],
+        health: Optional[SandboxResult],
+        control: Optional[SandboxResult]
     ) -> Verdict:
-        """Determine final verdict from three stages."""
+        """Determine final verdict from three stages.
         
-        # All three stages must align for VERIFIED
+        Matrix:
+        - Missing baseline -> INSUFFICIENT_EVIDENCE
+        - Baseline FAIL, Post-fix PASS, Health PASS, Control FAIL -> VERIFIED
+        - Baseline FAIL, Post-fix FAIL -> FAILED
+        - Baseline FAIL, Health FAIL -> FAILED
+        - Baseline FAIL, Post-fix PASS, Control PASS -> UNVERIFIED
+        - Baseline PASS -> UNVERIFIED
+        """
+        if baseline is None:
+            return Verdict.INSUFFICIENT_EVIDENCE
+
+        if post_fix is None or health is None or control is None:
+            return Verdict.INSUFFICIENT_EVIDENCE
+        
         baseline_failed = not baseline.success
         post_fix_passed = post_fix.success
         health_passed = health.success
-        control_failed = not control.success  # Control should FAIL (reproduce original failure)
-        
+        control_failed = not control.success
+
         if baseline_failed and post_fix_passed and health_passed and control_failed:
             return Verdict.VERIFIED
         elif not baseline_failed:
-            return Verdict.UNVERIFIED  # Baseline didn't fail - can't verify fix worked
-        elif not post_fix_passed:
-            return Verdict.FAILED  # Fix didn't work
-        elif not health_passed:
-            return Verdict.FAILED  # Health check failed
+            return Verdict.UNVERIFIED
+        elif not post_fix_passed or not health_passed:
+            return Verdict.FAILED
         elif not control_failed:
-            return Verdict.UNVERIFIED  # Control didn't fail - fix might not be causal
+            return Verdict.UNVERIFIED
         else:
             return Verdict.UNVERIFIED
 

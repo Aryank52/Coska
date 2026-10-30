@@ -252,12 +252,19 @@ cp ../.env.example ../.env
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `NEBIUS_API_KEY` | Yes | Nebius Token Factory API key |
-| `NEBIUS_BASE_URL` | Yes | `https://api.tokenfactory.us-central1.nebius.com/v1/` |
-| `NEBIUS_MODEL` | Yes | `nvidia/nemotron-3-ultra-550b-a55b` |
-| `TAVILY_API_KEY` | Yes | Tavily API key for web research |
+| `AI_PROVIDER` | No | `mock` (default for local development), `nebius`, or `auto` |
+| `NEBIUS_API_KEY` | Conditional | Nebius Token Factory API key (required when `AI_PROVIDER=nebius`) |
+| `NEBIUS_BASE_URL` | No | `https://api.tokenfactory.us-central1.nebius.com/v1/` |
+| `NEBIUS_MODEL` | No | `nvidia/nemotron-3-ultra-550b-a55b` |
+| `TAVILY_API_KEY` | No | Tavily API key for real-time web research (gracefully degrades if absent) |
+| `SANDBOX_MODE` | No | `local` (safe local isolation), `docker`, or `auto` (default) |
 | `DATABASE_URL` | No | SQLite default: `sqlite:///./coska.db` |
+| `MAX_AGENT_STEPS` | No | Safety bound on steps (default: 20) |
+| `MAX_TOOL_CALLS` | No | Safety bound on tool calls (default: 15) |
+| `MAX_RETRIES` | No | Safety bound on retries (default: 2) |
+| `MAX_INVESTIGATION_TIME` | No | Safety bound on investigation seconds (default: 180) |
 | `APP_ENV` | No | `development` or `production` |
+| `LOG_LEVEL` | No | `INFO` or `DEBUG` |
 
 ---
 
