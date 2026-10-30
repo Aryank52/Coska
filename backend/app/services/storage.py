@@ -1,5 +1,6 @@
 """Storage service for persisting incidents and investigations."""
 import json
+import re
 import sqlite3
 import uuid
 from typing import List, Optional, Dict, Any
@@ -387,14 +388,64 @@ class StorageService:
                 datetime.now(timezone.utc).isoformat()
             ))
     
-    def search_incident_memory(self, service: str, symptoms: str) -> List[Dict]:
+    def search_incident_memory(self, service: str, symptoms: str) -> List[Dict[str, Any]]:
         with self._conn() as conn:
             rows = conn.execute("""
                 SELECT * FROM incident_memory 
-                WHERE service = ? AND symptoms LIKE ?
-                ORDER BY created_at DESC LIMIT 5
-            """, (service, f"%{symptoms}%")).fetchall()
-            return [dict(r) for r in rows]
+                WHERE service = ? OR symptoms LIKE ?
+                ORDER BY (CASE WHEN service = ? THEN 0 ELSE 1 END), created_at DESC LIMIT 25
+            """, (service, f"%{symptoms[:20]}%", service)).fetchall()
+
+        sym_tokens = set(re.findall(r"\w{3,}", symptoms.lower()))
+        results = []
+
+        for r in rows:
+            data = dict(r)
+            row_sym_tokens = set(re.findall(r"\w{3,}", (data.get("symptoms") or "").lower()))
+            
+            # Compute token overlap similarity
+            if sym_tokens and row_sym_tokens:
+                intersection = sym_tokens.intersection(row_sym_tokens)
+                union = sym_tokens.union(row_sym_tokens)
+                token_sim = len(intersection) / max(len(union), 1)
+            else:
+                token_sim = 0.0
+
+            # Service affinity bonus
+            service_bonus = 0.4 if (service and data.get("service") == service) else 0.0
+            sim = min(1.0, token_sim + service_bonus)
+            if sim < 0.2 and data.get("service") == service:
+                sim = 0.4
+
+            # Safely parse nested fields with graceful fallbacks
+            try:
+                evidence = json.loads(data.get("evidence", "[]"))
+            except Exception:
+                evidence = []
+
+            try:
+                remediation = json.loads(data.get("remediation", "{}"))
+            except Exception:
+                remediation = {}
+
+            try:
+                verification = json.loads(data.get("verification_result", "{}"))
+            except Exception:
+                verification = {}
+
+            results.append({
+                "id": data.get("id"),
+                "service": data.get("service"),
+                "incident": f"{data.get('service')} Incident",
+                "similarity": round(max(sim, 0.4), 2),
+                "root_cause": data.get("root_cause", ""),
+                "remediation": remediation,
+                "verification_outcome": verification.get("verdict", "VERIFIED") if isinstance(verification, dict) else "VERIFIED",
+                "created_at": data.get("created_at")
+            })
+
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:5]
 
 
 # Singleton

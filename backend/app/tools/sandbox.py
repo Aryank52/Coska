@@ -481,84 +481,81 @@ class LocalSafeSandboxProvider(SandboxProvider):
         config_file: str = ".env"
     ) -> SandboxResult:
         start_time = time.time()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            sandbox_repo = temp_path / "repo"
-            shutil.copytree(repo_path, sandbox_repo)
+        repo_dir = Path(repo_path)
 
-            try:
-                key_part, new_value = config_change.split("->")
-                key = key_part.split(":")[0].strip()
-                new_value = new_value.strip()
-            except ValueError:
-                return SandboxResult(
-                    success=False,
-                    stdout="",
-                    stderr=f"Invalid config change format: {config_change}",
-                    exit_code=-1,
-                    duration_ms=int((time.time() - start_time) * 1000),
-                    files_changed=[]
-                )
-
-            if key not in self.ALLOWED_CONFIG_KEYS:
-                return SandboxResult(
-                    success=False,
-                    stdout="",
-                    stderr=f"Config key not allowed: {key}",
-                    exit_code=-1,
-                    duration_ms=int((time.time() - start_time) * 1000),
-                    files_changed=[]
-                )
-
-            target_file = sandbox_repo / config_file
-            try:
-                self._validate_path_containment(sandbox_repo, target_file)
-            except ValueError as e:
-                return SandboxResult(
-                    success=False,
-                    stdout="",
-                    stderr=str(e),
-                    exit_code=-1,
-                    duration_ms=int((time.time() - start_time) * 1000),
-                    files_changed=[]
-                )
-
-            if not target_file.exists():
-                for alt in [".env", "config.yaml", "config.yml", "settings.py", "application.properties"]:
-                    alt_path = sandbox_repo / alt
-                    if alt_path.exists():
-                        target_file = alt_path
-                        break
-
-            if not target_file.exists():
-                return SandboxResult(
-                    success=False,
-                    stdout="",
-                    stderr=f"Config file not found: {config_file}",
-                    exit_code=-1,
-                    duration_ms=int((time.time() - start_time) * 1000),
-                    files_changed=[]
-                )
-
-            content = target_file.read_text(encoding="utf-8", errors="replace")
-            pattern = rf"^{re.escape(key)}[:\s=]+.*$"
-            replacement = f"{key}={new_value}"
-
-            if re.search(pattern, content, re.MULTILINE):
-                new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
-            else:
-                new_content = content.rstrip() + f"\n{replacement}\n"
-
-            target_file.write_text(new_content, encoding="utf-8")
-
+        try:
+            key_part, new_value = config_change.split("->")
+            key = key_part.split(":")[0].strip()
+            new_value = new_value.strip()
+        except ValueError:
             return SandboxResult(
-                success=True,
-                stdout=f"Applied {config_change} to {target_file}",
-                stderr="",
-                exit_code=0,
+                success=False,
+                stdout="",
+                stderr=f"Invalid config change format: {config_change}",
+                exit_code=-1,
                 duration_ms=int((time.time() - start_time) * 1000),
-                files_changed=[str(target_file)]
+                files_changed=[]
             )
+
+        if key not in self.ALLOWED_CONFIG_KEYS:
+            return SandboxResult(
+                success=False,
+                stdout="",
+                stderr=f"Config key not allowed: {key}",
+                exit_code=-1,
+                duration_ms=int((time.time() - start_time) * 1000),
+                files_changed=[]
+            )
+
+        target_file = repo_dir / config_file
+        try:
+            self._validate_path_containment(repo_dir, target_file)
+        except ValueError as e:
+            return SandboxResult(
+                success=False,
+                stdout="",
+                stderr=str(e),
+                exit_code=-1,
+                duration_ms=int((time.time() - start_time) * 1000),
+                files_changed=[]
+            )
+
+        if not target_file.exists():
+            for alt in [".env", "config.yaml", "config.yml", "settings.py", "application.properties"]:
+                alt_path = repo_dir / alt
+                if alt_path.exists():
+                    target_file = alt_path
+                    break
+
+        if not target_file.exists():
+            return SandboxResult(
+                success=False,
+                stdout="",
+                stderr=f"Config file not found: {config_file}",
+                exit_code=-1,
+                duration_ms=int((time.time() - start_time) * 1000),
+                files_changed=[]
+            )
+
+        content = target_file.read_text(encoding="utf-8", errors="replace")
+        pattern = rf"^{re.escape(key)}[:\s=]+.*$"
+        replacement = f"{key}={new_value}"
+
+        if re.search(pattern, content, re.MULTILINE):
+            new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+        else:
+            new_content = content.rstrip() + f"\n{replacement}\n"
+
+        target_file.write_text(new_content, encoding="utf-8")
+
+        return SandboxResult(
+            success=True,
+            stdout=f"Applied {config_change} to {target_file}",
+            stderr="",
+            exit_code=0,
+            duration_ms=int((time.time() - start_time) * 1000),
+            files_changed=[str(target_file)]
+        )
 
     async def _evaluate_workload_safety(self, sandbox_repo: Path) -> SandboxResult:
         """Evaluate workload configuration and health inside isolated sandbox."""
@@ -628,9 +625,12 @@ class LocalSafeSandboxProvider(SandboxProvider):
                 )
 
             sanitized_env = self._sanitize_env()
+            exec_command = test_command
+            if exec_command.strip().startswith("pytest"):
+                exec_command = f'"{sys.executable}" -m {exec_command.strip()}'
             try:
                 proc = await asyncio.create_subprocess_shell(
-                    test_command,
+                    exec_command,
                     cwd=str(sandbox_repo),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,

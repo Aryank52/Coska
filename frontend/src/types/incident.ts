@@ -166,3 +166,219 @@ export interface VerificationReport {
   model: string
   details: Record<string, any>
 }
+
+// Enhanced types
+export interface IncidentIntelligence {
+  service: string
+  severity: Severity
+  symptoms: string[]
+  components: string[]
+  environment: string
+  error_types: string[]
+  probable_causes: string[]
+  timestamps: string[]
+  configuration_values: Record<string, string>
+  suspected_dependencies: string[]
+  business_impact: string
+  keywords: string[]
+  technical_entities: string[]
+  extraction_method: string
+  metadata?: Record<string, any>
+}
+
+export interface RAGDocument {
+  id: string
+  title: string
+  category: string
+  source: string
+  summary: string
+  content: string
+  tags: string[]
+  relevance_score: number
+  snippet: string
+  matched_terms: string[]
+  match_reason: string
+}
+
+export interface RAGSearchResult {
+  documents: RAGDocument[]
+  query: string
+  query_tokens: string[]
+  trace: Record<string, any>
+}
+
+export interface EvidenceGraphNode {
+  id: string
+  type: string
+  label: string
+  data: Record<string, any>
+  position?: { x: number; y: number }
+}
+
+export interface EvidenceGraphEdge {
+  id: string
+  source: string
+  target: string
+  type: string
+  weight: number
+  label: string
+  metadata: Record<string, any>
+}
+
+export interface EvidenceGraph {
+  incident_id: string
+  nodes: EvidenceGraphNode[]
+  edges: EvidenceGraphEdge[]
+  metadata: Record<string, any>
+  layout: string
+}
+
+export interface ServiceNode {
+  id: string
+  name: string
+  type: string
+  status: 'healthy' | 'degraded' | 'critical' | 'unknown'
+  metadata: Record<string, any>
+  position?: { x: number; y: number }
+}
+
+export interface ServiceEdge {
+  id: string
+  source: string
+  target: string
+  type: 'critical' | 'degraded' | 'optional'
+  protocol: string
+  latency_ms?: number
+  metadata: Record<string, any>
+}
+
+export interface ServiceMap {
+  services: ServiceNode[]
+  dependencies: ServiceEdge[]
+  metadata: Record<string, any>
+}
+
+export interface BlastRadius {
+  affected_service: string
+  direct_dependencies: string[]
+  transitive_dependencies: string[]
+  impacted_services: Array<{
+    service_id: string
+    service_name: string
+    impact_level: string
+    dependency_type: string
+    path: string
+  }>
+  severity: string
+  error_increase_percent: number
+  transaction_impact_percent: number
+  estimated_recovery_time_seconds: number
+  metadata: Record<string, any>
+}
+
+export interface DemoScenario {
+  id: string
+  name: string
+  description: string
+  category: string
+  incident: Record<string, any>
+  expected_root_cause: string
+  expected_remediation: Record<string, any>
+  expected_verification: Record<string, any>
+  difficulty: string
+  estimated_duration_seconds: number
+  tags: string[]
+}
+
+export interface InvestigationPlan {
+  incident_id: string
+  goal: string
+  steps: Array<{
+    step_id: number
+    type: string
+    description: string
+    tool_name?: string
+    tool_input?: Record<string, any>
+    rag_query?: string
+    reasoning: string
+    expected_outcome: string
+    depends_on: number[]
+    completed: boolean
+    result?: Record<string, any>
+    error?: string
+  }>
+  current_step_index: number
+  created_at: string
+  updated_at: string
+  status: string
+  total_budget: number
+  tool_budget: number
+  step_budget: number
+  time_budget_seconds: number
+  tools_used: number
+  steps_executed: number
+  rag_queries: number
+  tavily_queries: number
+}
+
+export interface PlanResult {
+  success: boolean
+  completed_steps: number
+  total_steps: number
+  root_cause?: Record<string, any>
+  remediation?: Record<string, any>
+  verification?: Record<string, any>
+  final_state: string
+  trace: Record<string, any>[]
+}
+
+export interface HypothesisDecision {
+  hypothesis_id: string
+  decision_type: string
+  confidence_before: number
+  confidence_after: number
+  evidence_considered: string[]
+  reasoning: string
+  alternative_considered?: string
+  next_validation_step?: string
+  timestamp: string
+}
+
+export interface VerificationReceipt {
+  incident_id: string
+  service: string
+  timestamp: string
+  root_cause: string | null
+  root_cause_confidence: number | null
+  remediation: Record<string, any> | null
+  verification: Record<string, any> | null
+  evidence_count: number
+  hypotheses_count: number
+  ai_provider: string
+  knowledge_sources: any[]
+  tavily_usage: string
+  final_determination: string
+}
+
+export interface IncidentReport {
+  executive_summary: {
+    incident_id: string
+    service: string
+    severity: string
+    status: string
+    description: string
+    created_at: string
+    resolved_at: string | null
+  }
+  incident_timeline: any[]
+  affected_services: string[]
+  evidence: any[]
+  competing_hypotheses: any[]
+  root_cause: any
+  remediation: any
+  verification: any
+  knowledge_sources: any[]
+  external_research: any[]
+  lessons_learned: string[]
+  recommended_prevention: string[]
+}

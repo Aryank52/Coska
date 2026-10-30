@@ -1,6 +1,9 @@
 import { Routes, Route } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { Dashboard } from './pages/Dashboard'
+import { JudgeMode } from './pages/JudgeMode'
+import { WhyCoska } from './pages/WhyCoska'
+import { Architecture } from './pages/Architecture'
 import { Investigation } from './pages/Investigation'
 import { Evidence } from './pages/Evidence'
 import { Hypotheses } from './pages/Hypotheses'
@@ -14,6 +17,9 @@ export function App() {
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={<Dashboard />} />
+        <Route path="judge" element={<JudgeMode />} />
+        <Route path="why" element={<WhyCoska />} />
+        <Route path="architecture" element={<Architecture />} />
         <Route path="incidents/:id" element={<IncidentDetail />}>
           <Route index element={<Investigation />} />
           <Route path="evidence" element={<Evidence />} />

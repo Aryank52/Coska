@@ -153,6 +153,16 @@ class Verifier:
             }
         )
         
+        # Ensure repository configuration is restored to clean state
+        if original_config:
+            config_path = os.path.join(self.repo_path, config_file)
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, "w", encoding="utf-8") as f:
+                        f.write(original_config)
+                except Exception:
+                    pass
+
         logger.info("verification_complete", incident_id=incident.id, verdict=verdict.value)
         return report
     

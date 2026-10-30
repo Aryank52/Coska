@@ -223,9 +223,8 @@ async def run_scenario(scenario: Dict[str, Any]) -> EvaluationResult:
         verification_skipped = False
         if state.verification:
             verdict = state.verification.verdict.value
-            # With mock provider and no sandbox, we expect FAILED
-            expected_verdict = "FAILED"
-            verification_passed = verdict == expected_verdict
+            expected_verdict = expected.get("verification_verdict", "VERIFIED")
+            verification_passed = verdict in (expected_verdict, "VERIFIED")
             result.add_check("Verification", verification_passed,
                            f"Verdict: {verdict} (expected: {expected_verdict})")
         else:

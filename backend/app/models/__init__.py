@@ -41,6 +41,7 @@ class SourceType(str, Enum):
     RUNTIME = "RUNTIME"
     WEB = "WEB"
     TEST = "TEST"
+    RAG = "RAG"
 
 
 class HypothesisStatus(str, Enum):
@@ -176,6 +177,7 @@ class InvestigationStateModel(BaseModel):
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
     tool_results: List[Dict[str, Any]] = Field(default_factory=list)
     web_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    knowledge_docs: List[Dict[str, Any]] = Field(default_factory=list)
     root_cause: Optional[Dict[str, Any]] = None
     remediation: Optional[Remediation] = None
     sandbox_result: Optional[Dict[str, Any]] = None

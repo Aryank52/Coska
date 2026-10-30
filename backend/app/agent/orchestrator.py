@@ -46,6 +46,7 @@ class InvestigationState:
         self.tool_calls: List[Dict[str, Any]] = []
         self.tool_results: List[Dict[str, Any]] = []
         self.web_sources: List[Dict[str, Any]] = []
+        self.knowledge_docs: List[Dict[str, Any]] = []
         self.root_cause: Optional[Dict[str, Any]] = None
         self.remediation: Optional[Remediation] = None
         self.sandbox_result: Optional[Dict[str, Any]] = None
@@ -93,6 +94,7 @@ class InvestigationState:
             "tool_calls": self.tool_calls,
             "tool_results": self.tool_results,
             "web_sources": self.web_sources,
+            "knowledge_docs": self.knowledge_docs,
             "root_cause": self.root_cause,
             "remediation": self.remediation.model_dump(mode='json') if self.remediation else None,
             "sandbox_result": self.sandbox_result,
@@ -128,6 +130,10 @@ class Orchestrator:
         # Register tools
         register_all_tools()
         self.tool_registry = get_tool_registry()
+
+        # Offline RAG Knowledge Engine
+        from app.services.rag import get_rag_engine
+        self.rag_engine = get_rag_engine()
 
         # Storage and active investigations map
         self.storage = get_storage()
@@ -187,6 +193,33 @@ class Orchestrator:
                 state.add_action("INCIDENT_MEMORY", "storage", f"Found {len(previous)} previous incident memories for {incident.service}")
         except Exception:
             pass
+
+        # Offline RAG Knowledge Retrieval
+        try:
+            query = f"{incident.service} {incident.description}"
+            rag_result = self.rag_engine.search(query, top_k=3)
+            rag_docs = rag_result.documents if hasattr(rag_result, 'documents') else rag_result
+            state.knowledge_docs = [d.model_dump() for d in rag_docs]
+            if rag_docs:
+                top = rag_docs[0]
+                rag_ev = Evidence(
+                    incident_id=incident.id,
+                    source_type=SourceType.RAG,
+                    claim=f"Runbook guidance from {top.title}: {top.summary}",
+                    reference=top.source,
+                    confidence=top.relevance_score,
+                    related_component=top.category,
+                    raw_data={"doc_id": top.id, "snippet": top.snippet, "relevance": top.relevance_score}
+                )
+                state.evidence.append(rag_ev)
+                state.add_action(
+                    "KNOWLEDGE_RETRIEVAL",
+                    "rag_engine",
+                    f"Retrieved {len(rag_docs)} runbooks; Top source: {top.title}",
+                    output_data={"query": query, "results_count": len(rag_docs), "top_source": top.title, "snippet": top.snippet}
+                )
+        except Exception as e:
+            logger.warning("rag_retrieval_failed", error=str(e))
 
         self._persist_state(state)
 

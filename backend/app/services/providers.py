@@ -69,6 +69,7 @@ class ProviderInfo:
     name: str
     model: str
     base_url: str
+    display_name: str = ""
     reachable: bool = False
     authenticated: bool = False
     model_available: bool = False
@@ -301,7 +302,8 @@ class MockAIProvider(AIProvider):
     async def health_check(self) -> ProviderInfo:
         return ProviderInfo(
             name="mock",
-            model=self.model,
+            model="coska-deterministic-mock",
+            display_name="Deterministic Mock Provider",
             base_url="mock://localhost",
             reachable=True,
             authenticated=True,
@@ -444,6 +446,7 @@ class NebiusTokenFactoryProvider(AIProvider):
         info = ProviderInfo(
             name="nebius",
             model=self.model,
+            display_name="NVIDIA Nemotron via Nebius Token Factory",
             base_url=self.base_url
         )
 

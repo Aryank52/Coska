@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
 from app.config import settings
-from app.api import health, incidents, investigations, verification
+from app.api import health, incidents, investigations, verification, demo, enhanced
 
 
 # Configure structured logging
@@ -58,6 +58,8 @@ app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(incidents.router, prefix="/api", tags=["incidents"])
 app.include_router(investigations.router, prefix="/api", tags=["investigations"])
 app.include_router(verification.router, prefix="/api", tags=["verification"])
+app.include_router(demo.router, prefix="/api", tags=["demo", "judge", "rag"])
+app.include_router(enhanced.router, prefix="/api", tags=["enhanced", "intelligence", "rag", "graph", "planner", "demo"])
 
 
 @app.get("/")

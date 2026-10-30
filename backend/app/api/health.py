@@ -1,6 +1,6 @@
 """Health check endpoints for COSKA subsystems."""
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Dict, Any, Optional
 import structlog
 
@@ -20,9 +20,11 @@ class HealthResponse(BaseModel):
 
 
 class AIHealthResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     status: str
     provider: str
     model: str
+    display_name: str = ""
     reachable: bool
     authenticated: bool
     model_available: bool
@@ -63,6 +65,7 @@ async def ai_health_check():
             status="healthy" if is_healthy else "degraded",
             provider=info.name,
             model=info.model,
+            display_name=info.display_name or ("Deterministic Mock Provider" if info.name == "mock" else "NVIDIA Nemotron via Nebius Token Factory"),
             reachable=info.reachable,
             authenticated=info.authenticated,
             model_available=info.model_available,
