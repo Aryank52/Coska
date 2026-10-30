@@ -1,39 +1,12 @@
-# COSKA Deployment Guide
+# DEPLOYMENT.md - COSKA Deployment Guide
 
-## Prerequisites
+## Quick Start (Development)
 
-- Docker 24+ and Docker Compose 2+
-- Python 3.12+ (for local development)
-- Node.js 18+ (for frontend development)
-- Nebius Token Factory API key
-- Tavily API key (optional, for web research)
-
-## Environment Variables
-
-Create `.env` from `.env.example`:
-
-```bash
-# Required
-NEBIUS_API_KEY=your_nebius_token_factory_key
-NEBIUS_BASE_URL=https://api.tokenfactory.us-central1.nebius.com/v1/
-NEBIUS_MODEL=nvidia/nemotron-3-ultra-550b-a55b
-
-# Optional (web research)
-TAVILY_API_KEY=your_tavily_key
-
-# Database
-DATABASE_URL=sqlite:///./coska.db
-
-# Application
-APP_ENV=production
-APP_HOST=0.0.0.0
-APP_PORT=8000
-
-# Frontend
-VITE_API_URL=https://your-domain.com/api
-```
-
-## Local Development
+### Prerequisites
+- Python 3.12+
+- Node.js 20+
+- SQLite (included)
+- Optional: Docker for sandbox
 
 ### Backend
 ```bash
@@ -41,414 +14,552 @@ cd backend
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp ../.env.example .env  # Edit with your keys
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --port 8000
 ```
 
 ### Frontend
 ```bash
 cd frontend
 npm install
-npm run dev
-# Opens http://localhost:5173 (proxies /api to localhost:8000)
+npm run dev  # Port 5173
 ```
 
-### Demo Payment API
-```bash
-cd demo/payment-api
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn app.main:app --reload --port 8001
-```
+### Verify
+- Backend: http://localhost:8000/api/health
+- Frontend: http://localhost:5173
+- Docs: http://localhost:8000/docs (FastAPI auto-docs)
 
-## Docker Deployment
+---
 
-### Development with Docker Compose
-```bash
-docker-compose up --build
-```
+## Production Deployment
 
-Services:
-- `coska-backend`: http://localhost:8000
-- `coska-frontend`: http://localhost:5173
-- `payment-api`: http://localhost:8001
-- `coska-db`: SQLite volume
+### Option 1: Docker Compose (Recommended)
 
-### Production Docker Compose
-
-Create `docker-compose.prod.yml`:
-
+#### docker-compose.yml
 ```yaml
 version: '3.8'
 
 services:
-  coska-backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.prod
+  api:
+    build: .
     ports:
       - "8000:8000"
     environment:
+      - AI_PROVIDER=nebius
       - NEBIUS_API_KEY=${NEBIUS_API_KEY}
-      - NEBIUS_BASE_URL=${NEBIUS_BASE_URL}
-      - NEBIUS_MODEL=${NEBIUS_MODEL}
+      - NEBIUS_BASE_URL=https://api.tokenfactory.us-central1.nebius.com/v1/
+      - NEBIUS_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+      - TAVILY_ENABLED=true
       - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - AUTH_REQUIRED=true
+      - SESSION_SECRET=${SESSION_SECRET}
       - DATABASE_URL=sqlite:///./data/coska.db
       - APP_ENV=production
+      - SANDBOX_MODE=docker
     volumes:
-      - coska-data:/app/data
-    restart: unless-stopped
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
+    restart: unless-stopped
 
-  coska-frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.prod
+  nginx:
+    image: nginx:alpine
     ports:
       - "80:80"
       - "443:443"
-    environment:
-      - VITE_API_URL=https://your-domain.com/api
-    depends_on:
-      - coska-backend
-    restart: unless-stopped
-
-  payment-api:
-    build:
-      context: ./demo/payment-api
-      dockerfile: Dockerfile
-    ports:
-      - "8001:8001"
-    environment:
-      - DB_POOL_SIZE=30  # Fixed in production!
-      - DATABASE_URL=sqlite+aiosqlite:///./data/payments.db
     volumes:
-      - payment-data:/app/data
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - api
     restart: unless-stopped
-
-volumes:
-  coska-data:
-  payment-data:
 ```
 
-Deploy:
-```bash
-docker-compose -f docker-compose.prod.yml up -d --build
+#### Dockerfile (Multi-stage)
+```dockerfile
+# Build stage - Backend
+FROM python:3.12-slim AS backend-builder
+WORKDIR /app
+COPY backend/requirements.txt .
+RUN pip install --user -r requirements.txt
+
+# Build stage - Frontend
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ .
+RUN npm run build
+
+# Runtime stage
+FROM python:3.12-slim
+WORKDIR /app
+
+# Copy Python packages
+COPY --from=backend-builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+# Copy backend
+COPY backend/ .
+
+# Copy frontend build
+COPY --from=frontend-builder /app/dist ./frontend/dist
+
+ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-## Nebius Serverless Deployment (Optional)
+#### nginx.conf
+```nginx
+events {
+    worker_connections 1024;
+}
 
-### Backend as Serverless Endpoint
+http {
+    upstream api {
+        server api:8000;
+    }
 
-1. Push backend to Git repository
-2. In Nebius Console → Serverless Endpoints
-3. Create new endpoint:
-   - Source: Your Git repo / backend folder
-   - Runtime: Python 3.12
-   - Entry: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
-   - Environment variables: Add all from `.env`
-   - Min/Max instances: 1-10
+    server {
+        listen 80;
+        server_name coska.example.com;
+        return 301 https://$server_name$request_uri;
+    }
 
-### Serverless Jobs for Async Work
+    server {
+        listen 443 ssl http2;
+        server_name coska.example.com;
 
-For long-running investigations:
+        ssl_certificate /etc/nginx/certs/fullchain.pem;
+        ssl_certificate_key /etc/nginx/certs/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
 
-```yaml
-# .nebius/job-investigation.yaml
-name: coska-investigation
-runtime: python-3.12
-entrypoint: python -m app.agent.orchestrator
-env:
-  - NEBIUS_API_KEY
-  - TAVILY_API_KEY
-resources:
-  cpu: 2
-  memory: 4Gi
-timeout: 600
-```
+        # Frontend
+        location / {
+            root /usr/share/nginx/html;
+            try_files $uri $uri/ /index.html;
+        }
 
-Trigger via API:
-```bash
-curl -X POST https://serverless.nebius.com/v1/jobs/coska-investigation/runs \
-  -H "Authorization: Bearer $NEBIUS_API_KEY" \
-  -d '{"incident_id": "INC-XXX", "auto_approve": true}'
-```
+        # API
+        location /api/ {
+            proxy_pass http://api;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 300s;
+            proxy_send_timeout 300s;
+        }
 
-## Kubernetes Deployment (Advanced)
-
-### Namespace
-```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: coska
-```
-
-### ConfigMap
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: coska-config
-  namespace: coska
-data:
-  NEBIUS_BASE_URL: "https://api.tokenfactory.us-central1.nebius.com/v1/"
-  NEBIUS_MODEL: "nvidia/nemotron-3-ultra-550b-a55b"
-  DATABASE_URL: "sqlite:///./data/coska.db"
-  APP_ENV: "production"
-```
-
-### Secret
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: coska-secrets
-  namespace: coska
-type: Opaque
-stringData:
-  NEBIUS_API_KEY: "your_key_here"
-  TAVILY_API_KEY: "your_key_here"
-```
-
-### Backend Deployment
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: coska-backend
-  namespace: coska
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: coska-backend
-  template:
-    metadata:
-      labels:
-        app: coska-backend
-    spec:
-      containers:
-      - name: backend
-        image: your-registry/coska-backend:latest
-        ports:
-        - containerPort: 8000
-        envFrom:
-        - configMapRef:
-            name: coska-config
-        - secretRef:
-            name: coska-secrets
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
-        livenessProbe:
-          httpGet:
-            path: /api/health
-            port: 8000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        volumeMounts:
-        - name: data
-          mountPath: /app/data
-      volumes:
-      - name: data
-        persistentVolumeClaim:
-          claimName: coska-data-pvc
-```
-
-### Service
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: coska-backend
-  namespace: coska
-spec:
-  selector:
-    app: coska-backend
-  ports:
-  - port: 8000
-    targetPort: 8000
-  type: ClusterIP
-```
-
-### Ingress (with TLS)
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: coska-ingress
-  namespace: coska
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-spec:
-  tls:
-  - hosts:
-    - coska.your-domain.com
-    secretName: coska-tls
-  rules:
-  - host: coska.your-domain.com
-    http:
-      paths:
-      - path: /api
-        pathType: Prefix
-        backend:
-          service:
-            name: coska-backend
-            port:
-              number: 8000
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: coska-frontend
-            port:
-              number: 80
-```
-
-## SSL/TLS Configuration
-
-### Let's Encrypt with cert-manager
-```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
-```
-
-### Self-Signed (Development)
-```bash
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout tls.key -out tls.crt \
-  -subj "/CN=coska.local"
-```
-
-## Monitoring & Observability
-
-### Health Endpoints
-- `GET /api/health` - Basic liveness
-- `GET /api/health/ai` - AI provider connectivity
-
-### Structured Logging
-All logs in JSON format:
-```json
-{
-  "timestamp": "2026-10-29T...",
-  "level": "info",
-  "logger": "orchestrator",
-  "incident_id": "INC-XXX",
-  "step": "VERIFYING",
-  "duration_ms": 1234
+        # Health
+        location /health {
+            proxy_pass http://api/api/health;
+            access_log off;
+        }
+    }
 }
 ```
 
-### Recommended Stack
-- **Logs**: Loki + Grafana
-- **Metrics**: Prometheus + Grafana
-- **Traces**: Jaeger (add OpenTelemetry to FastAPI)
-- **Alerts**: Alertmanager → PagerDuty/Slack
-
-## Backup & Recovery
-
-### Database Backup
+#### Deploy
 ```bash
-# SQLite backup (run on running container)
-docker exec coska-backend sqlite3 /app/data/coska.db ".backup /app/data/coska-backup.db"
+# Set secrets
+export NEBIUS_API_KEY=your_key
+export TAVILY_API_KEY=your_key
+export SESSION_SECRET=$(openssl rand -hex 32)
 
-# Or copy volume
-docker run --rm -v coska-data:/data -v $(pwd):/backup alpine \
-  cp /data/coska.db /backup/coska-$(date +%Y%m%d).db
+# Deploy
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f
+
+# Verify
+curl https://coska.example.com/api/health
+```
+
+---
+
+### Option 2: Separate Deployments
+
+#### Backend (Render/Railway/Fly.io)
+```yaml
+# render.yaml
+services:
+  - type: web
+    name: coska-api
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: AI_PROVIDER
+        value: nebius
+      - key: NEBIUS_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        value: sqlite:///./data/coska.db
+      - key: SANDBOX_MODE
+        value: docker
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
+```
+
+#### Frontend (Vercel/Netlify)
+```json
+// vercel.json
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://your-api.render.com/api/$1" }
+  ],
+  "env": {
+    "VITE_API_URL": "https://your-api.render.com"
+  }
+}
+```
+
+---
+
+## Environment Variables
+
+### Required for Live Integration
+```bash
+# AI Provider
+AI_PROVIDER=nebius                    # mock | nebius | auto
+NEBIUS_API_KEY=                       # Nebius Token Factory key
+NEBIUS_BASE_URL=https://api.tokenfactory.us-central1.nebius.com/v1/
+NEBIUS_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+
+# Tavily
+TAVILY_ENABLED=true
+TAVILY_API_KEY=
+
+# Auth (Production)
+AUTH_REQUIRED=true
+SESSION_SECRET=                       # 32+ bytes, generate: openssl rand -hex 32
+
+# Database
+DATABASE_URL=sqlite:///./data/coska.db
+
+# Sandbox
+SANDBOX_MODE=docker                   # local | docker | auto
+SANDBOX_TIMEOUT=300
+SANDBOX_MEMORY_LIMIT=512m
+SANDBOX_CPU_LIMIT=1.0
+
+# Safety Budgets
+MAX_AGENT_STEPS=40
+MAX_TOOL_CALLS=25
+MAX_RETRIES=3
+MAX_INVESTIGATION_TIME=300
+```
+
+### Development (Defaults)
+```bash
+AI_PROVIDER=mock
+TAVILY_ENABLED=false
+AUTH_REQUIRED=false
+SANDBOX_MODE=local
+```
+
+---
+
+## Health & Monitoring
+
+### Health Endpoints
+```bash
+# Basic
+curl http://localhost:8000/api/health
+
+# AI Provider
+curl http://localhost:8000/api/health/ai
+
+# Tavily
+curl http://localhost:8000/api/health/tavily
+
+# Sandbox
+curl http://localhost:8000/api/health/sandbox
+```
+
+### Expected Responses
+```json
+// /api/health
+{"status": "healthy", "service": "coska", "version": "0.1.0"}
+
+// /api/health/ai (mock)
+{"status": "healthy", "provider": "mock", "model": "coska-deterministic-mock", "reachable": true, "authenticated": true, "model_available": true}
+
+// /api/health/ai (nebius)
+{"status": "healthy", "provider": "nebius", "model": "nvidia/nemotron-3-ultra-550b-a55b", "reachable": true, "authenticated": true, "model_available": true}
+
+// /api/health/tavily
+{"status": "healthy", "configured": true, "connected": true}
+
+// /api/health/sandbox
+{"status": "healthy", "provider": "local_safe", "available": true, "mode": "local"}
+```
+
+---
+
+## Database Management
+
+### Backup
+```bash
+# SQLite backup (online)
+sqlite3 data/coska.db ".backup backup_$(date +%Y%m%d_%H%M%S).db"
+
+# Or copy (WAL mode safe)
+cp data/coska.db backup_$(date +%Y%m%d_%H%M%S).db
+cp data/coska.db-wal backup_$(date +%Y%m%d_%H%M%S).db-wal
+cp data/coska.db-shm backup_$(date +%Y%m%d_%H%M%S).db-shm
 ```
 
 ### Restore
 ```bash
-docker run --rm -v coska-data:/data -v $(pwd):/backup alpine \
-  cp /backup/coska-20261029.db /data/coska.db
+# Stop services first
+docker-compose stop
+
+# Restore
+cp backup_20261030_120000.db data/coska.db
+cp backup_20261030_120000.db-wal data/coska.db-wal
+cp backup_20261030_120000.db-shm data/coska.db-shm
+
+# Restart
+docker-compose up -d
 ```
+
+### Migration (Future)
+```bash
+# When schema changes:
+# 1. Create migration script
+# 2. Test on copy
+# 3. Backup
+# 4. Run migration
+# 5. Verify
+```
+
+---
 
 ## Scaling Considerations
 
-### Horizontal Scaling
-- Backend: Stateless, can run multiple replicas
-- Frontend: Static files, CDN recommended
-- Database: SQLite → PostgreSQL for multi-instance
+| Component | Current | Scaling Approach |
+|-----------|---------|------------------|
+| API | Single FastAPI | Horizontal (load balancer + multiple replicas) |
+| Database | SQLite | Migrate to PostgreSQL + connection pooling |
+| Sandbox | Local/Docker | Kubernetes jobs / gVisor |
+| RAG | In-memory BM25 | Redis cache + vector DB hybrid |
+| Auth | In-memory sessions | Redis-backed distributed sessions |
+| Rate Limiting | In-memory | Redis-backed distributed |
+| Audit Logs | SQLite table | Elasticsearch / OpenSearch |
 
-### Database Migration (SQLite → PostgreSQL)
+---
+
+## Security Hardening (Production)
+
+### SSL/TLS
+```nginx
+# nginx.conf
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers HIGH:!aNULL:!MD5;
+ssl_prefer_server_ciphers on;
+ssl_session_cache shared:SSL:10m;
+ssl_session_timeout 10m;
+
+# HSTS
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+```
+
+### Secrets Rotation
 ```bash
-# Update DATABASE_URL
-DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/coska
+# Rotate NEBIUS_API_KEY
+# 1. Generate new key in Nebius console
+# 2. Update deployment secret
+# 3. Restart api service
+# 4. Verify health check
 
-# Run migrations
-alembic upgrade head
+# Rotate SESSION_SECRET
+# 1. Generate new: openssl rand -hex 32
+# 2. Update deployment secret
+# 3. All users logged out (expected)
+# 3. Restart api service
 ```
 
-### AI Provider Limits
-- Nebius Token Factory: Check quota limits
-- Implement request queuing for high volume
-- Cache common investigation patterns
-
-## CI/CD Pipeline
-
-### GitHub Actions Example
-```yaml
-name: Deploy COSKA
-on:
-  push:
-    branches: [main]
-
-jobs:
-  backend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build backend
-        run: docker build -t coska-backend ./backend
-      - name: Run tests
-        run: docker run coska-backend pytest
-      - name: Push to registry
-        run: |
-          echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
-          docker tag coska-backend ${{ secrets.REGISTRY }}/coska-backend:${{ github.sha }}
-          docker push ${{ secrets.REGISTRY }}/coska-backend:${{ github.sha }}
-
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build frontend
-        run: |
-          cd frontend
-          npm ci
-          npm run build
-      - name: Deploy to CDN
-        run: ... # Your CDN deploy step
+### Database Encryption (Future)
+```bash
+# SQLite encryption (SQLCipher)
+# Or migrate to PostgreSQL with TDE
 ```
+
+---
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| Backend fails to start | Check `.env` exists and has valid keys |
-| AI health check fails | Verify Nebius API key and quota |
-| Frontend shows CORS error | Check `VITE_API_URL` matches backend |
-| Sandbox tests fail | Ensure Docker daemon accessible |
-| Database locked | Single SQLite writer; use PostgreSQL for HA |
-| High memory usage | Reduce sandbox memory limit |
-| Slow investigations | Check Nebius latency, consider caching |
+| Issue | Diagnosis | Fix |
+|-------|-----------|-----|
+| API returns 500 | Check logs: `docker-compose logs api` | Check DB permissions, env vars |
+| Frontend shows "API unreachable" | Check VITE_API_URL, CORS | Verify nginx proxy, API health |
+| Database locked | SQLite concurrency | Enable WAL mode, reduce concurrent writes |
+| Sandbox fails | Docker not running | Enable Docker, check `docker ps` |
+| AI provider unhealthy | Check `/api/health/ai` | Verify API key, network |
+| Tavily not working | Check `/api/health/tavily` | Verify API key, enable TAVILY_ENABLED |
+| Rate limited (429) | Check rate limit middleware | Adjust limits, add Redis backend |
+| Database locked | Concurrent writes | Enable WAL, reduce concurrency |
+
+---
+
+## Backup Strategy
+
+```bash
+#!/bin/bash
+# backup.sh - Run via cron daily
+
+BACKUP_DIR="/backups"
+DATE=$(date +%Y%m%d_%H%M%S)
+mkdir -p $BACKUP_DIR
+
+# Stop writes briefly (optional)
+# docker-compose pause api
+
+# Backup SQLite + WAL/SHM
+cp /app/data/coska.db $BACKUP_DIR/coska_$DATE.db
+cp /app/data/coska.db-wal $BACKUP_DIR/coska_$DATE.db-wal 2>/dev/null || true
+cp /app/data/coska.db-shm $BACKUP_DIR/coska_$DATE.db-shm 2>/dev/null || true
+
+# Compress
+tar -czf $BACKUP_DIR/coska_$DATE.tar.gz -C $BACKUP_DIR coska_$DATE.db*
+
+# Cleanup old (keep 30 days)
+find $BACKUP_DIR -name "coska_*.tar.gz" -mtime +30 -delete
+
+# Resume
+# docker-compose unpause api
+
+echo "Backup complete: $BACKUP_DIR/coska_$DATE.tar.gz"
+```
+
+---
 
 ## Rollback Procedure
 
 ```bash
-# Docker Compose
-docker-compose down
-docker-compose up -d --build  # Previous image tag
+# 1. Stop services
+docker-compose stop
 
-# Kubernetes
-kubectl rollout undo deployment/coska-backend -n coska
+# 2. Restore database
+cp /backups/coska_20261030_120000.db /app/data/coska.db
+cp /backups/coska_20261030_120000.db-wal /app/data/coska.db-wal
+cp /backups/coska_20261030_120000.db-shm /app/data/coska.db-shm
+
+# 3. Restore code (if needed)
+git checkout v1.2.3  # Previous tag
+docker-compose build
+
+# 4. Start services
+docker-compose up -d
+
+# 5. Verify
+curl https://coska.example.com/api/health
+python scripts/evaluate_coska.py
 ```
+
+---
+
+## CI/CD Pipeline (GitHub Actions)
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install backend deps
+        run: |
+          cd backend
+          pip install -r requirements.txt
+      
+      - name: Run backend tests
+        run: |
+          cd backend
+          python -m pytest -q
+      
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install frontend deps
+        run: |
+          cd frontend
+          npm ci
+      
+      - name: TypeScript check
+        run: |
+          cd frontend
+          npx tsc --noEmit
+      
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
+      
+      - name: Security scan
+        run: |
+          python scripts/security_check.py
+      
+      - name: Evaluation harness
+        run: |
+          python scripts/evaluate_coska.py
+```
+
+---
+
+## Rollout Strategy
+
+| Phase | Traffic | Duration | Success Criteria |
+|-------|---------|----------|------------------|
+| Canary | 5% | 1 hour | Health checks pass, no errors |
+| Partial | 25% | 2 hours | P99 latency < 500ms, error rate < 0.1% |
+| Full | 100% | - | All metrics stable |
+
+---
+
+## Maintenance Windows
+
+| Task | Frequency | Window |
+|------|-----------|--------|
+| Database backup | Daily | 03:00 UTC |
+| Security scan | Weekly | Monday 02:00 UTC |
+| Dependency audit | Monthly | 1st Monday 02:00 UTC |
+| Log rotation | Daily | 04:00 UTC |
+| Certificate renewal | 90 days | Automated (Let's Encrypt) |
