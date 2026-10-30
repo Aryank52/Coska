@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { getIncidents } from '../services/api'
 import { IncidentResponse } from '../types/incident'
-import { AlertTriangle, Activity, CheckCircle, TrendingUp } from 'lucide-react'
+import { AlertTriangle, Activity, CheckCircle, TrendingUp, Gavel } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import { NavLink } from 'react-router-dom'
 
 export function Dashboard() {
   const [incidents, setIncidents] = useState<IncidentResponse[]>([])
@@ -79,6 +80,10 @@ export function Dashboard() {
           <p className="page-subtitle">Incident command center overview</p>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <NavLink to="/judge" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', fontSize: 14, fontWeight: 600 }}>
+            <Gavel style={{ width: 18, height: 18 }} />
+            <span>RUN JUDGE DEMO</span>
+          </NavLink>
           <span className="status-indicator">
             <span className="status-dot running" />
             <span>LIVE</span>
