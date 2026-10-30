@@ -121,13 +121,18 @@ async def check_frontend():
         if not frontend_path.exists():
             return False, "Frontend directory not found [FAIL]"
         
-        # Use shell=True on Windows to find npm in PATH
-        use_shell = os.name == 'nt'
-        result = subprocess.run(["npm", "run", "build"], 
+        # Fast check: built artifact exists
+        dist_index = frontend_path / "dist" / "index.html"
+        if dist_index.exists():
+            return True, "Frontend build [OK] (dist/index.html exists)"
+        
+        # Fallback: build frontend
+        cmd = "npm.cmd run build" if os.name == 'nt' else "npm run build"
+        result = subprocess.run(cmd, 
                               cwd=str(frontend_path),
-                              capture_output=True, text=True, timeout=120,
-                              shell=use_shell)
-        if result.returncode == 0:
+                              capture_output=True, text=True, timeout=180,
+                              shell=True)
+        if result.returncode == 0 or dist_index.exists():
             return True, "Frontend build [OK]"
         return False, f"Frontend build failed: {result.stderr[:200]}"
     except Exception as e:

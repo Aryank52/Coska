@@ -67,33 +67,41 @@ export function Dashboard() {
   // KPI calculations
   const activeCount = incidents.filter(i => i.status !== 'RESOLVED').length || 1
   const verifiedCount = incidents.filter(i => i.status === 'RESOLVED').length || 12
-  const totalInvestigations = incidents.length || 14
 
   const aiName = infra.aiProvider === 'nebius'
     ? 'NVIDIA Nemotron via Nebius Token Factory'
     : 'Deterministic Mock Provider'
 
   const tavilyName = infra.tavilyStatus === 'healthy' || infra.tavilyStatus === 'connected'
-    ? 'Tavily Search Engine (Connected)'
-    : 'Offline Cached Research'
+    ? 'Tavily Search Engine'
+    : 'Offline Cached Operational Knowledge'
 
   const sandboxName = infra.sandboxMode.includes('docker')
     ? 'Docker Container Sandbox'
     : 'Local Safe Sandbox'
 
   return (
-    <div>
-      {/* Command Center Title & Status Banner */}
+    <div style={{ paddingBottom: 60 }}>
+      {/* 10-Second Mission Header */}
       <div className="page-header" style={{ marginBottom: 20 }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <h1 className="page-title">COMMAND CENTER</h1>
-            <span className="simulation-pill">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <h1 className="page-title" style={{ margin: 0 }}>COMMAND CENTER</h1>
+            <span className="simulation-pill" style={{ fontWeight: 800, letterSpacing: '0.05em' }}>
               SIMULATION / DEMO ENVIRONMENT
             </span>
           </div>
-          <p className="page-subtitle" style={{ fontSize: 13, marginTop: 4 }}>
-            Investigate. Resolve. Verify. — Autonomous incident diagnosis and deterministic causal recovery
+          <div style={{ 
+            fontSize: 15, 
+            fontWeight: 600, 
+            color: 'var(--accent-primary)', 
+            marginTop: 6,
+            letterSpacing: '0.02em'
+          }}>
+            COSKA investigates incidents, finds root causes, proposes safe remediation, and proves recovery.
+          </div>
+          <p className="page-subtitle" style={{ fontSize: 13, marginTop: 2 }}>
+            Autonomous Incident Intelligence & Verified Recovery — Investigate. Resolve. Verify.
           </p>
         </div>
 
@@ -104,12 +112,12 @@ export function Dashboard() {
             style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', fontSize: 14, fontWeight: 700 }}
           >
             <Gavel style={{ width: 18, height: 18 }} />
-            <span>RUN JUDGE DEMO (90s)</span>
+            <span>OPEN JUDGE MODE (90s DEMO)</span>
           </NavLink>
         </div>
       </div>
 
-      {/* Subsystem Telemetry Banner */}
+      {/* Subsystem Telemetry Banner with Accurate Labels */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <div className="badge badge-low" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12 }}>
           <span className="status-dot running" style={{ width: 8, height: 8 }} />
@@ -125,10 +133,10 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Main KPI Row */}
+      {/* Main KPI Row - Required 7 Core Metrics */}
       <div className="grid grid-5" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 }}>
-        <div className="stat-card">
-          <div className="stat-label">Active Incidents</div>
+        <div className="stat-card" style={{ borderLeft: '3px solid var(--accent-danger)' }}>
+          <div className="stat-label">Active Investigations</div>
           <div className="stat-value" style={{ color: 'var(--accent-danger)' }}>{activeCount}</div>
           <div className="stat-trend up">
             <AlertTriangle style={{ width: 14, height: 14 }} />
@@ -136,16 +144,7 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="stat-label">Total Investigations</div>
-          <div className="stat-value" style={{ color: 'var(--accent-info)' }}>{totalInvestigations}</div>
-          <div className="stat-trend">
-            <Activity style={{ width: 14, height: 14 }} />
-            <span>Autonomous agent runs</span>
-          </div>
-        </div>
-
-        <div className="stat-card">
+        <div className="stat-card" style={{ borderLeft: '3px solid var(--accent-primary)' }}>
           <div className="stat-label">Verified Recoveries</div>
           <div className="stat-value" style={{ color: 'var(--accent-primary)' }}>{verifiedCount}</div>
           <div className="stat-trend down">
@@ -154,8 +153,8 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="stat-label">Avg Root Cause Confidence</div>
+        <div className="stat-card" style={{ borderLeft: '3px solid var(--accent-primary)' }}>
+          <div className="stat-label">Root Cause Confidence</div>
           <div className="stat-value" style={{ color: 'var(--accent-primary)' }}>92%</div>
           <div className="stat-trend">
             <Zap style={{ width: 14, height: 14 }} />
@@ -163,12 +162,21 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="stat-label">Avg Investigation Time</div>
-          <div className="stat-value" style={{ color: 'var(--fg-primary)' }}>42s</div>
+        <div className="stat-card" style={{ borderLeft: '3px solid var(--accent-warning)' }}>
+          <div className="stat-label">Error Rate (Incident)</div>
+          <div className="stat-value" style={{ color: 'var(--accent-danger)', fontSize: 24 }}>1.2% → 38%</div>
+          <div className="stat-trend">
+            <Activity style={{ width: 14, height: 14 }} />
+            <span>HTTP 500 Spike</span>
+          </div>
+        </div>
+
+        <div className="stat-card" style={{ borderLeft: '3px solid var(--accent-info)' }}>
+          <div className="stat-label">Affected Service</div>
+          <div className="stat-value mono" style={{ color: 'var(--accent-info)', fontSize: 20 }}>payment-api</div>
           <div className="stat-trend">
             <Clock style={{ width: 14, height: 14 }} />
-            <span>From alert to verified fix</span>
+            <span>Blast Radius: 3 services</span>
           </div>
         </div>
       </div>
@@ -177,59 +185,59 @@ export function Dashboard() {
       <div className="hero-incident">
         <div className="hero-header">
           <div className="hero-title-group">
-            <span className="badge badge-critical" style={{ fontSize: 13, padding: '4px 12px' }}>
+            <span className="badge badge-critical" style={{ fontSize: 13, padding: '4px 12px', fontWeight: 800 }}>
               CRITICAL INCIDENT
             </span>
             <span className="hero-service">PAYMENT-API</span>
             <span style={{ color: 'var(--fg-muted)', fontSize: 13 }}>•</span>
-            <span className="mono" style={{ color: 'var(--fg-muted)', fontSize: 13 }}>INC-PAYMENT-POOL</span>
+            <span className="mono" style={{ color: 'var(--fg-muted)', fontSize: 13 }}>INC-PAYMENT-POOL-8821</span>
           </div>
           <div className="status-indicator">
             <span className="status-dot running" />
-            <span>UNRESOLVED SYMPTOM SPIKE</span>
+            <span style={{ fontWeight: 700 }}>AUTONOMOUS DIAGNOSIS IN PROGRESS</span>
           </div>
         </div>
 
         <div className="hero-metrics-strip">
           <div className="hero-metric-item">
             <span className="hero-metric-label">HTTP 500 Error Rate</span>
-            <span className="hero-metric-val" style={{ color: 'var(--accent-danger)' }}>
+            <span className="hero-metric-val" style={{ color: 'var(--accent-danger)', fontWeight: 800 }}>
               1.2% → 38%
             </span>
           </div>
           <div className="hero-metric-item">
-            <span className="hero-metric-label">Database Subsystem</span>
-            <span className="hero-metric-val" style={{ color: 'var(--accent-warning)' }}>
-              Connection Timeout (QueuePool)
+            <span className="hero-metric-label">Affected Service</span>
+            <span className="hero-metric-val mono" style={{ color: 'var(--accent-info)' }}>
+              payment-api:v1.8.2
             </span>
           </div>
           <div className="hero-metric-item">
             <span className="hero-metric-label">Blast Radius</span>
-            <span className="hero-metric-val" style={{ fontSize: 13 }}>
+            <span className="hero-metric-val" style={{ fontSize: 14, color: 'var(--accent-warning)', fontWeight: 700 }}>
               Checkout / Payment / Order
             </span>
           </div>
           <div className="hero-metric-item">
-            <span className="hero-metric-label">Expected Resolution</span>
-            <span className="hero-metric-val" style={{ color: 'var(--accent-primary)', fontSize: 13 }}>
-              DB_POOL_SIZE: 5 → 30
+            <span className="hero-metric-label">Root Cause Confidence</span>
+            <span className="hero-metric-val" style={{ color: 'var(--accent-primary)', fontWeight: 800 }}>
+              92% (Database Connection Pool)
             </span>
           </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
-          <p style={{ color: 'var(--fg-secondary)', fontSize: 13, margin: 0, maxWidth: 850 }}>
-            Under simulated concurrent checkout load, worker threads exhausted the 5 database connection slots, resulting in cascading queue timeouts and an immediate 38% failure rate on payment transactions.
+          <p style={{ color: 'var(--fg-secondary)', fontSize: 13, margin: 0, maxWidth: 850, lineHeight: 1.6 }}>
+            Under simulated concurrent checkout traffic, worker threads exhausted the 5 database connection slots, resulting in cascading QueuePool timeouts and an immediate 38% HTTP 500 error spike on payment transactions.
           </p>
 
           <div style={{ display: 'flex', gap: 10 }}>
             <button
               onClick={() => navigate('/judge')}
               className="btn btn-primary"
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', fontWeight: 700 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', fontWeight: 800, fontSize: 14 }}
             >
-              <Play style={{ width: 16, height: 16 }} />
-              <span>INVESTIGATE INCIDENT</span>
+              <Play style={{ width: 16, height: 16, fill: 'currentColor' }} />
+              <span>INVESTIGATE INCIDENT & PROVE RECOVERY</span>
             </button>
           </div>
         </div>

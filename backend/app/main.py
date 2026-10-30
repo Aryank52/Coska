@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
+import os
 
 from app.config import settings
 from app.api import health, incidents, investigations, verification, demo, enhanced
@@ -44,10 +45,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for frontend
+# CORS for frontend - support environment variable for production
+frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+allow_origins = [origin.strip() for origin in frontend_origin.split(",") if origin.strip()]
+# Always allow localhost for development
+if "http://localhost:5173" not in allow_origins:
+    allow_origins.append("http://localhost:5173")
+if "http://localhost:3000" not in allow_origins:
+    allow_origins.append("http://localhost:3000")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

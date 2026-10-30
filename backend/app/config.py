@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     
     # Frontend
     vite_api_url: str = "http://localhost:8000"
+    frontend_origin: str = "http://localhost:5173"
     
     # Sandbox
     sandbox_mode: str = "local"  # local, docker, auto

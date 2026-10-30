@@ -1,10 +1,12 @@
-import { Outlet, NavLink, useLocation } from 'react-router-dom'
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { LayoutDashboard, Gavel, Cpu, Globe, Shield, CheckCircle2, HelpCircle, Code } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { aiHealthCheck, tavilyHealthCheck, sandboxHealthCheck } from '../services/api'
+import { VoiceControl } from './VoiceControl'
 
 export function Layout() {
   const location = useLocation()
+  const navigate = useNavigate()
   const isJudgeMode = location.pathname === '/judge'
 
   const [infra, setInfra] = useState({
@@ -27,16 +29,33 @@ export function Layout() {
   }, [])
 
   const aiLabel = infra.aiProvider === 'nebius' 
-    ? 'NVIDIA Nemotron via Nebius'
+    ? 'NVIDIA Nemotron via Nebius Token Factory'
     : 'Deterministic Mock Provider'
 
   const tavilyLabel = infra.tavilyStatus === 'healthy' || infra.tavilyStatus === 'connected'
-    ? 'Tavily (Connected)'
-    : 'Offline'
+    ? 'Tavily Search Engine'
+    : 'Offline Cached Operational Knowledge'
 
   const sandboxLabel = infra.sandboxMode.includes('docker')
-    ? 'Docker'
-    : 'Local Safe'
+    ? 'Docker Container Sandbox'
+    : 'Local Safe Sandbox'
+
+  const handleVoiceCommand = (command?: string) => {
+    const cmd = (command || '').toLowerCase()
+    let scenario = 'payment_pool_exhaustion'
+    if (cmd.includes('retry')) {
+      scenario = 'external_api_retry_misconfiguration'
+    } else if (cmd.includes('config') || cmd.includes('bad') || cmd.includes('regression')) {
+      scenario = 'bad_deployment_config_regression'
+    } else if (cmd.includes('cache') || cmd.includes('stampede')) {
+      scenario = 'cache_stampede'
+    } else if (cmd.includes('memory') || cmd.includes('leak')) {
+      scenario = 'memory_leak'
+    } else if (cmd.includes('saturation')) {
+      scenario = 'database_saturation'
+    }
+    navigate(`/judge?scenario=${scenario}&autostart=true`)
+  }
 
   return (
     <div className="app-layout">
@@ -52,7 +71,7 @@ export function Layout() {
         </div>
 
         {/* Central Operational Status Pills */}
-        <div className="status-pill-group" style={{ display: 'flex' }}>
+        <div className="status-pill-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div className="status-pill" title="AI Provider">
             <Cpu style={{ width: 13, height: 13, color: 'var(--accent-primary)' }} />
             <span>AI: <strong>{aiLabel}</strong></span>
@@ -70,12 +89,15 @@ export function Layout() {
 
           <div className="status-pill" style={{ borderColor: 'rgba(0, 212, 170, 0.4)', background: 'rgba(0, 212, 170, 0.08)' }}>
             <CheckCircle2 style={{ width: 13, height: 13, color: 'var(--accent-primary)' }} />
-            <span>Verification: <strong style={{ color: 'var(--accent-primary)' }}>Ready</strong></span>
+            <span>Verification: <strong style={{ color: 'var(--accent-primary)' }}>Deterministic Causal Verifier: READY</strong></span>
           </div>
 
           <span className="simulation-pill" style={{ padding: '3px 8px', fontSize: 10 }}>
-            SIMULATION
+            SIMULATION / DEMO ENVIRONMENT
           </span>
+
+          {/* Voice Assistant Push-To-Talk Control */}
+          <VoiceControl onCommandTrigger={handleVoiceCommand} isCompact />
         </div>
 
         {/* Navigation Actions */}
