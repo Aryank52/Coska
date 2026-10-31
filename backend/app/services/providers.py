@@ -1,7 +1,11 @@
 """AI Provider abstraction for COSKA runtime.
 
-Provides a unified interface for model reasoning via Nebius Token Factory
-(NVIDIA Nemotron models) and deterministic MockAIProvider for local testing.
+Provides a unified interface for model reasoning via multiple AI providers:
+- MockAIProvider: Deterministic mock provider for development/testing
+- LocalLLMProvider: Local LLM inference (Ollama, llama.cpp, etc.)
+- OpenAICompatibleProvider: OpenAI-compatible API endpoints (OpenAI, vLLM, TGI, etc.)
+
+The application must never assume a specific AI vendor.
 """
 from abc import ABC, abstractmethod
 import asyncio
@@ -98,7 +102,7 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
-    async def test_inference(self, prompt: str = "Reply with exactly: COSKA_NEBIUS_OK") -> Dict[str, Any]:
+    async def test_inference(self, prompt: str = "Reply with exactly: COSKA_AI_OK") -> Dict[str, Any]:
         """Test inference with a simple prompt."""
         pass
 
@@ -109,13 +113,18 @@ class AIProvider(ABC):
 
 
 # =============================================================================
-# Mock Provider Implementation
+# Mock Provider Implementation (Default - No External Dependencies)
 # =============================================================================
 
 class MockAIProvider(AIProvider):
-    """Deterministic mock provider supporting the full COSKA workflow."""
+    """Deterministic mock provider supporting the full COSKA workflow.
+    
+    This is the DEFAULT provider - it requires no external dependencies,
+    API keys, or network access. It returns deterministic responses based
+    on the request context, enabling full offline development and testing.
+    """
 
-    def __init__(self, model: str = "nvidia/nemotron-3-ultra-550b-a55b"):
+    def __init__(self, model: str = "coska-deterministic-mock"):
         self.model = model
         self.call_count = 0
         self.last_messages: List[Dict] = []
@@ -140,15 +149,15 @@ class MockAIProvider(AIProvider):
         last_msg = messages[-1].get("content", "").lower() if messages else ""
         all_text = " ".join([m.get("content", "") for m in messages]).lower()
 
-        # 1. Remediation planner: system message indicates remediation OR prompt specifically requests remediation plan
+        # 1. Remediation planner
         if "remediation" in system_msg or "generating a remediation plan" in last_msg or "generate a specific, validated remediation" in last_msg:
             return self._mock_remediation(all_text)
 
-        # 2. Hypothesis generation: system message indicates hypotheses OR prompt requests competing hypotheses
+        # 2. Hypothesis generation
         if "hypothes" in system_msg or "competing root cause hypotheses" in last_msg or "current hypotheses:" in last_msg or "return as json array" in last_msg:
             return self._mock_hypotheses(all_text)
 
-        # 3. Root cause reasoning: system message indicates root cause OR prompt tasks root cause determination
+        # 3. Root cause reasoning
         if "root cause analyst" in system_msg or "performing root cause analysis" in last_msg or "determine the root cause" in last_msg or "root_cause" in last_msg or "root cause" in last_msg:
             return self._mock_root_cause(all_text)
 
@@ -302,7 +311,7 @@ class MockAIProvider(AIProvider):
     async def health_check(self) -> ProviderInfo:
         return ProviderInfo(
             name="mock",
-            model="coska-deterministic-mock",
+            model=self.model,
             display_name="Deterministic Mock Provider",
             base_url="mock://localhost",
             reachable=True,
@@ -311,12 +320,12 @@ class MockAIProvider(AIProvider):
             inference_test=True
         )
 
-    async def test_inference(self, prompt: str = "Reply with exactly: COSKA_NEBIUS_OK") -> Dict[str, Any]:
-        if "COSKA_NEBIUS_OK" in prompt:
+    async def test_inference(self, prompt: str = "Reply with exactly: COSKA_AI_OK") -> Dict[str, Any]:
+        if "COSKA_AI_OK" in prompt:
             return {
                 "success": True,
                 "model": self.model,
-                "response": "COSKA_NEBIUS_OK",
+                "response": "COSKA_AI_OK",
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
             }
         return {
@@ -331,33 +340,33 @@ class MockAIProvider(AIProvider):
 
 
 # =============================================================================
-# Nebius Token Factory Provider Implementation
+# Local LLM Provider (Ollama, llama.cpp, etc.)
 # =============================================================================
 
-class NebiusTokenFactoryProvider(AIProvider):
-    """Production-ready Nebius Token Factory provider with bounded retry and error states."""
-
-    MAX_RETRIES = 2
-    RETRY_BACKOFFS = [1.0, 2.0]
+class LocalLLMProvider(AIProvider):
+    """Local LLM provider for Ollama, llama.cpp, and compatible local inference servers.
+    
+    Supports OpenAI-compatible local endpoints like:
+    - Ollama (http://localhost:11434/v1)
+    - llama.cpp server (http://localhost:8080/v1)
+    - LM Studio (http://localhost:1234/v1)
+    """
 
     def __init__(
         self,
-        api_key: str,
-        base_url: str = "https://api.tokenfactory.us-central1.nebius.com/v1/",
-        model: str = "nvidia/nemotron-3-ultra-550b-a55b"
+        base_url: str = "http://localhost:11434/v1",
+        model: str = "llama3.1:8b",
+        api_key: str = "ollama"
     ):
-        self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.api_key = api_key
         self._client = None
-        self._health_info: Optional[ProviderInfo] = None
 
     @property
     def client(self):
         if self._client is None:
             import httpx
-            if not self.api_key or self.api_key == "your_nebius_token_factory_api_key_here":
-                raise ProviderNotConfiguredError("NEBIUS_API_KEY is not configured or is a placeholder")
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers={
@@ -376,7 +385,6 @@ class NebiusTokenFactoryProvider(AIProvider):
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> Dict[str, Any]:
-        """Send chat completion request with bounded 429 retries and explicit error handling."""
         import httpx
 
         payload = {
@@ -390,35 +398,29 @@ class NebiusTokenFactoryProvider(AIProvider):
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice or "auto"
 
-        logger.debug("nebius_request", model=self.model, message_count=len(messages))
+        logger.debug("local_llm_request", model=self.model, message_count=len(messages))
 
         retries = 0
+        max_retries = 2
         while True:
             try:
                 response = await self.client.post("/chat/completions", json=payload)
 
-                # HTTP 429: Bounded retry
                 if response.status_code == 429:
-                    if retries < self.MAX_RETRIES:
-                        backoff = self.RETRY_BACKOFFS[retries]
-                        logger.warning("nebius_rate_limited_retrying", retry=retries + 1, backoff=backoff)
-                        await asyncio.sleep(backoff)
+                    if retries < 2:
+                        await asyncio.sleep([1.0, 2.0][retries])
                         retries += 1
                         continue
-                    else:
-                        raise ProviderRateLimitedError("Rate limit exceeded on Nebius Token Factory after bounded retries")
+                    raise ProviderRateLimitedError("Rate limit exceeded on local LLM")
 
-                # HTTP 401 / 403: Unauthorized
                 if response.status_code in (401, 403):
-                    raise ProviderUnauthorizedError(f"Nebius authentication failed: HTTP {response.status_code}")
+                    raise ProviderUnauthorizedError(f"Local LLM authentication failed: HTTP {response.status_code}")
 
-                # HTTP 404: Model not found
                 if response.status_code == 404:
-                    raise ModelUnavailableError(f"Model {self.model} not available on endpoint")
+                    raise ModelUnavailableError(f"Model {self.model} not available on local endpoint")
 
-                # HTTP 5xx: Service unavailable
                 if response.status_code >= 500:
-                    raise ProviderUnavailableError(f"Nebius service unavailable: HTTP {response.status_code}", status_code=response.status_code)
+                    raise ProviderUnavailableError(f"Local LLM service unavailable: HTTP {response.status_code}", status_code=response.status_code)
 
                 response.raise_for_status()
 
@@ -430,27 +432,199 @@ class NebiusTokenFactoryProvider(AIProvider):
                 if not result or not result.get("choices"):
                     raise ProviderInvalidResponseError("Empty choices returned from model")
 
-                logger.debug("nebius_response_received", model=self.model)
+                logger.debug("local_llm_response_received", model=self.model)
                 return result
 
             except httpx.ConnectError as e:
-                raise ProviderUnavailableError(f"Cannot connect to Nebius Token Factory: {e}")
+                raise ProviderUnavailableError(f"Cannot connect to local LLM: {e}")
             except httpx.TimeoutException as e:
-                raise ProviderUnavailableError(f"Nebius Token Factory request timed out: {e}")
+                raise ProviderUnavailableError(f"Local LLM request timed out: {e}")
             except ProviderError:
                 raise
             except Exception as e:
-                raise ProviderError(f"Unexpected Nebius error: {e}")
+                raise ProviderError(f"Unexpected local LLM error: {e}")
 
     async def health_check(self) -> ProviderInfo:
         info = ProviderInfo(
-            name="nebius",
+            name="local",
             model=self.model,
-            display_name="NVIDIA Nemotron via Nebius Token Factory",
-            base_url=self.base_url
+            base_url=self.base_url,
+            display_name=f"Local LLM ({self.model})",
         )
 
-        if not self.api_key or self.api_key == "your_nebius_token_factory_api_key_here":
+        try:
+            await self.client.get("/models", timeout=5.0)
+            info.reachable = True
+        except Exception as e:
+            info.error = f"PROVIDER_UNAVAILABLE: {e}"
+            self._health_info = info
+            return info
+
+        try:
+            test_result = await self.test_inference()
+            info.authenticated = test_result.get("success", False)
+            info.inference_test = test_result.get("success", False)
+            info.model_available = True
+            if not info.authenticated:
+                info.error = test_result.get("error", "PROVIDER_UNAUTHORIZED")
+        except Exception as e:
+            info.error = str(e)
+
+        self._health_info = info
+        return info
+
+    async def test_inference(self, prompt: str = "Reply with exactly: COSKA_AI_OK") -> Dict[str, Any]:
+        try:
+            result = await self.chat_completion(
+                messages=[
+                    {"role": "system", "content": "You are COSKA, an autonomous incident intelligence system."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=50,
+                temperature=0
+            )
+            return {
+                "success": True,
+                "model": self.model,
+                "response": result["choices"][0]["message"]["content"] if result.get("choices") else None,
+                "usage": result.get("usage")
+            }
+        except Exception as e:
+            logger.error("local_llm_test_inference_failed", error=str(e))
+            return {"success": False, "error": str(e)}
+
+    async def close(self):
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+
+# =============================================================================
+# OpenAI-Compatible Provider (OpenAI, vLLM, TGI, etc.)
+# =============================================================================
+
+class OpenAICompatibleProvider(AIProvider):
+    """OpenAI-compatible provider for OpenAI API, vLLM, TGI, and compatible endpoints.
+    
+    Supports:
+    - OpenAI API (api.openai.com)
+    - vLLM servers
+    - TGI (Text Generation Inference)
+    - Any OpenAI-compatible endpoint
+    """
+
+    MAX_RETRIES = 2
+    RETRY_BACKOFFS = [1.0, 2.0]
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.openai.com/v1/",
+        model: str = "gpt-4o"
+    ):
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            import httpx
+            if not self.api_key or self.api_key == "your_openai_api_key_here":
+                raise ProviderNotConfiguredError("OPENAI_API_KEY is not configured or is a placeholder")
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=httpx.Timeout(120.0, connect=10.0),
+            )
+        return self._client
+
+    async def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict]] = None,
+        tool_choice: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 4096,
+    ) -> Dict[str, Any]:
+        import httpx
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
+
+        logger.debug("openai_compatible_request", model=self.model, message_count=len(messages))
+
+        retries = 0
+        while True:
+            try:
+                response = await self.client.post("/chat/completions", json=payload)
+
+                # HTTP 429: Bounded retry
+                if response.status_code == 429:
+                    if retries < self.MAX_RETRIES:
+                        backoff = self.RETRY_BACKOFFS[retries]
+                        logger.warning("openai_rate_limited_retrying", retry=retries + 1, backoff=backoff)
+                        await asyncio.sleep(backoff)
+                        retries += 1
+                        continue
+                    else:
+                        raise ProviderRateLimitedError("Rate limit exceeded after bounded retries")
+
+                # HTTP 401 / 403: Unauthorized
+                if response.status_code in (401, 403):
+                    raise ProviderUnauthorizedError(f"OpenAI-compatible authentication failed: HTTP {response.status_code}")
+
+                # HTTP 404: Model not found
+                if response.status_code == 404:
+                    raise ModelUnavailableError(f"Model {self.model} not available on endpoint")
+
+                # HTTP 5xx: Service unavailable
+                if response.status_code >= 500:
+                    raise ProviderUnavailableError(f"OpenAI-compatible service unavailable: HTTP {response.status_code}", status_code=response.status_code)
+
+                response.raise_for_status()
+
+                try:
+                    result = response.json()
+                except Exception as e:
+                    raise ProviderInvalidResponseError(f"Failed to parse JSON response: {e}")
+
+                if not result or not result.get("choices"):
+                    raise ProviderInvalidResponseError("Empty choices returned from model")
+
+                logger.debug("openai_response_received", model=self.model)
+                return result
+
+            except httpx.ConnectError as e:
+                raise ProviderUnavailableError(f"Cannot connect to OpenAI-compatible endpoint: {e}")
+            except httpx.TimeoutException as e:
+                raise ProviderUnavailableError(f"OpenAI-compatible request timed out: {e}")
+            except ProviderError:
+                raise
+            except Exception as e:
+                raise ProviderError(f"Unexpected OpenAI-compatible error: {e}")
+
+    async def health_check(self) -> ProviderInfo:
+        info = ProviderInfo(
+            name="openai_compatible",
+            model=self.model,
+            base_url=self.base_url,
+            display_name=f"OpenAI Compatible ({self.model})"
+        )
+
+        if not self.api_key or self.api_key == "your_openai_api_key_here":
             info.error = "PROVIDER_NOT_CONFIGURED"
             self._health_info = info
             return info
@@ -476,7 +650,7 @@ class NebiusTokenFactoryProvider(AIProvider):
         self._health_info = info
         return info
 
-    async def test_inference(self, prompt: str = "Reply with exactly: COSKA_NEBIUS_OK") -> Dict[str, Any]:
+    async def test_inference(self, prompt: str = "Reply with exactly: COSKA_AI_OK") -> Dict[str, Any]:
         try:
             result = await self.chat_completion(
                 messages=[
@@ -493,7 +667,7 @@ class NebiusTokenFactoryProvider(AIProvider):
                 "usage": result.get("usage")
             }
         except Exception as e:
-            logger.error("nebius_test_inference_failed", error=str(e))
+            logger.error("openai_compatible_test_inference_failed", error=str(e))
             return {"success": False, "error": str(e)}
 
     async def close(self):
@@ -508,31 +682,57 @@ class NebiusTokenFactoryProvider(AIProvider):
 
 def create_provider(provider_type: str = "auto", **kwargs) -> AIProvider:
     """Factory function to create AI provider based on configuration."""
-    model = kwargs.get("model") or get_settings().nebius_model
+    model = kwargs.get("model") or get_settings().ai_model
 
     if provider_type == "mock":
         return MockAIProvider(model=model)
 
-    if provider_type == "nebius":
+    if provider_type == "local":
+        return LocalLLMProvider(
+            base_url=kwargs.get("base_url") or get_settings().local_llm_base_url,
+            model=kwargs.get("model") or get_settings().local_llm_model,
+            api_key=kwargs.get("api_key") or get_settings().local_llm_api_key
+        )
+
+    if provider_type == "openai_compatible":
         api_key = kwargs.get("api_key")
-        if not api_key or api_key == "your_nebius_token_factory_api_key_here":
-            logger.warning("nebius_api_key_missing_falling_back_to_mock")
+        if not api_key or api_key == "your_openai_api_key_here":
+            logger.warning("openai_api_key_missing_falling_back_to_mock")
             return MockAIProvider(model=model)
-        return NebiusTokenFactoryProvider(
+        return OpenAICompatibleProvider(
             api_key=api_key,
-            base_url=kwargs.get("base_url") or get_settings().nebius_base_url,
+            base_url=kwargs.get("base_url") or get_settings().openai_base_url,
             model=model
         )
 
-    # Auto-detect: if valid api key present, use nebius, else fallback to mock
+    # Auto-detect: if valid api key present for openai_compatible, use it, else fallback to mock
     if provider_type == "auto":
-        api_key = kwargs.get("api_key") or kwargs.get("nebius_api_key") or get_settings().nebius_api_key
-        if api_key and api_key != "your_nebius_token_factory_api_key_here":
-            return NebiusTokenFactoryProvider(
+        api_key = kwargs.get("api_key") or kwargs.get("openai_api_key") or get_settings().openai_api_key
+        if api_key and api_key != "your_openai_api_key_here":
+            return OpenAICompatibleProvider(
                 api_key=api_key,
-                base_url=kwargs.get("base_url") or get_settings().nebius_base_url,
+                base_url=kwargs.get("base_url") or get_settings().openai_base_url,
                 model=model
             )
+        # Check for local LLM
+        local_url = kwargs.get("base_url") or get_settings().local_llm_base_url
+        try:
+            import httpx
+            async def check_local_llm():
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    resp = await client.get(f"{local_url}/models", timeout=2.0)
+                    if resp.status_code == 200:
+                        return LocalLLMProvider(
+                            base_url=local_url,
+                            model=kwargs.get("model") or get_settings().local_llm_model,
+                            api_key=kwargs.get("api_key") or get_settings().local_llm_api_key
+                        )
+                    return None
+            result = asyncio.run(check_local_llm())
+            if result:
+                return result
+        except Exception:
+            pass
         return MockAIProvider(model=model)
 
     raise ValueError(f"Unknown provider type: {provider_type}")
@@ -552,9 +752,12 @@ def get_provider(provider_type: Optional[str] = None, **kwargs) -> AIProvider:
     active_type = provider_type or settings.ai_provider
 
     provider_kwargs = {
-        "api_key": kwargs.get("api_key", settings.nebius_api_key),
-        "base_url": kwargs.get("base_url", settings.nebius_base_url),
-        "model": kwargs.get("model", settings.nebius_model),
+        "api_key": kwargs.get("api_key", settings.openai_api_key),
+        "base_url": kwargs.get("base_url", settings.openai_base_url),
+        "model": kwargs.get("model", settings.ai_model),
+        "local_llm_base_url": kwargs.get("local_llm_base_url", settings.local_llm_base_url),
+        "local_llm_model": kwargs.get("local_llm_model", settings.local_llm_model),
+        "local_llm_api_key": kwargs.get("local_llm_api_key", settings.local_llm_api_key),
     }
 
     instance = create_provider(active_type, **provider_kwargs)

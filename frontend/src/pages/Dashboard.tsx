@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { DEMO_SCENARIOS, DemoScenario } from '../services/demoScenarios'
+import { SCENARIOS, DemoScenario } from '../services/demoScenarios'
 
 export function Dashboard() {
   const navigate = useNavigate()
@@ -21,7 +21,7 @@ export function Dashboard() {
   })
 
   // Selected scenario from Demo Library
-  const [selectedScenario, setSelectedScenario] = useState<DemoScenario>(DEMO_SCENARIOS[0])
+  const [selectedScenario, setSelectedScenario] = useState<DemoScenario>(SCENARIOS[0])
 
   useEffect(() => {
     loadData()
@@ -258,7 +258,7 @@ export function Dashboard() {
         </div>
 
         <div className="scenario-grid">
-          {DEMO_SCENARIOS.map(sc => (
+          {SCENARIOS.map(sc => (
             <div
               key={sc.id}
               onClick={() => setSelectedScenario(sc)}

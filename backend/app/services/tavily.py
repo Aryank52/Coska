@@ -1,16 +1,20 @@
-"""Tavily client for web research."""
+"""Tavily client for web research - backward compatibility wrapper.
+
+This module provides a backward-compatible wrapper around the ResearchProvider abstraction.
+"""
 import httpx
 import structlog
 from typing import Dict, Any, List, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
+from app.services.research import get_research_provider, ResearchResponse
 
 logger = structlog.get_logger()
 
 
 class TavilyClient:
-    """Client for Tavily Search API."""
+    """Backward-compatible wrapper around the ResearchProvider abstraction."""
     
     def __init__(self):
         self.settings = get_settings()
@@ -50,7 +54,7 @@ class TavilyClient:
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Search the web using Tavily."""
+        """Search the web using Tavily (backward compatibility)."""
         if not self.is_configured:
             return {
                 "status": "TAVILY_NOT_CONFIGURED",
@@ -58,33 +62,34 @@ class TavilyClient:
                 "results": [],
                 "answer": None
             }
-
-        payload = {
-            "api_key": self.api_key,
-            "query": query,
-            "max_results": max_results,
-            "search_depth": search_depth,
-            "include_answer": True,
-            "include_raw_content": False,
+        
+        # Use the research provider abstraction
+        research_provider = get_research_provider("external" if self.is_configured else "mock")
+        response = await research_provider.search(
+            query=query,
+            max_results=max_results,
+            search_depth=search_depth,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
+        
+        # Convert ResearchResponse to legacy format
+        return {
+            "status": response.status,
+            "query": response.query,
+            "results": [
+                {
+                    "title": r.title,
+                    "url": r.url,
+                    "content": r.snippet,
+                    "score": r.score,
+                    "source": r.source
+                }
+                for r in response.results
+            ],
+            "answer": response.answer,
+            "usage": response.usage
         }
-        
-        if include_domains:
-            payload["include_domains"] = include_domains
-        if exclude_domains:
-            payload["exclude_domains"] = exclude_domains
-        
-        logger.debug("tavily_search", query=query, max_results=max_results)
-        
-        try:
-            response = await self.client.post("/search", json=payload)
-            response.raise_for_status()
-            result = response.json()
-            logger.debug("tavily_search_complete", query=query, result_count=len(result.get("results", [])))
-            return result
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code in (401, 403):
-                return {"status": "TAVILY_UNAUTHORIZED", "query": query, "results": [], "error": str(e)}
-            raise
     
     async def health_check(self) -> bool:
         """Check if Tavily API is accessible."""

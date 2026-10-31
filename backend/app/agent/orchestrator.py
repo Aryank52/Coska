@@ -125,7 +125,7 @@ class Orchestrator:
             cpu_limit=self.settings.sandbox_cpu_limit,
             provider_mode=self.settings.sandbox_mode
         )
-        self.verifier = Verifier(self.sandbox, repo_path, self.settings.nebius_model)
+        self.verifier = Verifier(self.sandbox, repo_path, self.settings.ai_model)
 
         # Register tools
         register_all_tools()

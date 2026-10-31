@@ -64,7 +64,7 @@ export interface DemoScenario {
   }
 }
 
-export const DEMO_SCENARIOS: DemoScenario[] = [
+export const SCENARIOS: DemoScenario[] = [
   {
     id: 'payment_pool_exhaustion',
     name: 'Payment Pool Exhaustion',

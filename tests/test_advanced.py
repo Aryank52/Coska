@@ -24,7 +24,7 @@ from app.tools.sandbox import (
     SandboxResult, LocalSafeSandboxProvider, DockerSandboxProvider, SandboxEngine
 )
 from app.services.providers import (
-    create_provider, MockAIProvider, NebiusTokenFactoryProvider,
+    create_provider, MockAIProvider, LocalLLMProvider, OpenAICompatibleProvider,
     ProviderError, ProviderRateLimitedError, ProviderUnauthorizedError,
     ProviderUnavailableError, ProviderNotConfiguredError
 )

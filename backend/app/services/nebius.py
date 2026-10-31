@@ -1,4 +1,7 @@
-"""Nebius Token Factory provider wrapper for backward compatibility."""
+"""AI Provider wrapper for backward compatibility.
+
+This module provides a backward-compatible wrapper around the AI provider abstraction.
+"""
 import structlog
 from typing import Any, Dict, List, Optional
 
@@ -8,7 +11,7 @@ from app.config import get_settings
 logger = structlog.get_logger()
 
 
-class NebiusClient:
+class AIClient:
     """Backward-compatible wrapper around the AI provider abstraction."""
     
     def __init__(self):
@@ -20,9 +23,9 @@ class NebiusClient:
         if self._provider is None:
             self._provider = get_provider(
                 provider_type=self.settings.ai_provider,
-                api_key=self.settings.nebius_api_key,
-                base_url=self.settings.nebius_base_url,
-                model=self.settings.nebius_model
+                api_key=self.settings.openai_api_key,
+                base_url=self.settings.openai_base_url,
+                model=self.settings.ai_model
             )
         return self._provider
     
@@ -57,11 +60,16 @@ class NebiusClient:
 
 
 # Backward-compatible singleton
-_nebius_client: Optional[NebiusClient] = None
+_ai_client: Optional[AIClient] = None
 
 
-def get_nebius_client() -> NebiusClient:
-    global _nebius_client
-    if _nebius_client is None:
-        _nebius_client = NebiusClient()
-    return _nebius_client
+def get_ai_client() -> AIClient:
+    global _ai_client
+    if _ai_client is None:
+        _ai_client = AIClient()
+    return _ai_client
+
+
+# Backward compatibility aliases
+NebiusClient = AIClient
+get_nebius_client = get_ai_client

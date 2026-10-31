@@ -5,7 +5,7 @@ import {
   Search, Lightbulb, Target, Wrench, Download, Code, Globe, Cpu,
   ArrowRight, FileText, X
 } from 'lucide-react'
-import { DEMO_SCENARIOS } from '../services/demoScenarios'
+import { SCENARIOS } from '../services/demoScenarios'
 import { aiHealthCheck, tavilyHealthCheck, sandboxHealthCheck, healthCheck } from '../services/api'
 
 type StepKey = 'incident' | 'evidence' | 'rag' | 'hypotheses' | 'root_cause' | 'remediation' | 'verification' | 'receipt'
@@ -37,7 +37,7 @@ export function JudgeMode() {
     dbStatus: 'healthy',
   })
 
-  const scenario = DEMO_SCENARIOS.find(s => s.id === selectedScenarioId) || DEMO_SCENARIOS[0]
+  const scenario = SCENARIOS.find(s => s.id === selectedScenarioId) || SCENARIOS[0]
 
   useEffect(() => {
     loadHealth()
@@ -136,7 +136,7 @@ FINAL VERDICT: VERIFIED
 Verification ID: ${scenario.verification.receiptId}
 Timestamp: ${scenario.verification.timestamp}
 Sandbox Provider: ${infra.sandboxMode}
-AI Provider: ${infra.aiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token Factory' : 'Deterministic Mock Provider'}
+AI Provider: ${infra.aiProvider === 'openai_compatible' ? 'OpenAI Compatible (GPT-4o)' : infra.aiProvider === 'local' ? 'Local LLM (Ollama)' : 'Deterministic Mock Provider'}
 `
     const blob = new Blob([reportText], { type: 'text/markdown;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -149,12 +149,14 @@ AI Provider: ${infra.aiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token
   }
 
   // Provider display names
-  const aiProviderLabel = infra.aiProvider === 'nebius' 
-    ? 'NVIDIA Nemotron via Nebius Token Factory'
+  const aiProviderLabel = infra.aiProvider === 'openai_compatible' 
+    ? 'OpenAI Compatible (GPT-4o)'
+    : infra.aiProvider === 'local'
+    ? 'Local LLM (Ollama)'
     : 'Deterministic Mock Provider'
 
   const researchProviderLabel = infra.tavilyStatus === 'healthy' || infra.tavilyStatus === 'connected'
-    ? 'Tavily Search Engine (Live)'
+    ? 'External Research (Live)'
     : 'Offline Cached Research'
 
   const sandboxLabel = infra.sandboxMode.includes('docker')
@@ -169,14 +171,14 @@ AI Provider: ${infra.aiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Gavel style={{ width: 24, height: 24, color: 'var(--accent-primary)' }} />
-              <span>JUDGE DEMO PASS</span>
+              <span>SCENARIO LAB</span>
             </h1>
             <span className="simulation-pill">
               SIMULATION / DEMO ENVIRONMENT
             </span>
           </div>
           <p className="page-subtitle" style={{ marginTop: 4 }}>
-            Autonomous Incident Intelligence & Verified Recovery — Reproducible 10s / 30s / 90s Showcase
+            Autonomous Incident Intelligence & Verified Recovery — Scenario Laboratory & Demonstration
           </p>
         </div>
 
@@ -196,7 +198,7 @@ AI Provider: ${infra.aiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token
             ) : (
               <>
                 <Play style={{ width: 16, height: 16, fill: 'currentColor' }} />
-                <span>RUN CANONICAL DEMO (90s)</span>
+                <span>RUN SCENARIO</span>
               </>
             )}
           </button>
@@ -303,7 +305,7 @@ AI Provider: ${infra.aiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token
                 Reasoning Layer
               </div>
               <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>
-                {infra.aiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius' : 'Deterministic Mock Provider'}
+                {infra.aiProvider === 'openai_compatible' ? 'OpenAI Compatible (GPT-4o)' : infra.aiProvider === 'local' ? 'Local LLM (Ollama)' : 'Deterministic Mock Provider'}
               </div>
               <p style={{ fontSize: 12, color: 'var(--fg-secondary)' }}>
                 Hypothesis formulation, multi-signal evidence weighting, and structured remediation plan synthesis.
@@ -314,7 +316,7 @@ AI Provider: ${infra.aiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token
               <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--accent-secondary)', fontWeight: 700, marginBottom: 6 }}>
                 Research & Memory
               </div>
-              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>RAG + Tavily Web Engine</div>
+              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>RAG + External Research Engine</div>
               <p style={{ fontSize: 12, color: 'var(--fg-secondary)' }}>
                 Offline operational runbook index combined with live external search for error codes, library bugs, and architecture guides.
               </p>
@@ -386,11 +388,11 @@ AI Provider: ${infra.aiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token
         </div>
       )}
 
-      {/* Scenario Selector Ribbon (Demo Library) */}
+      {/* Scenario Selector Ribbon (Scenario Library) */}
       <div className="card" style={{ padding: 18, marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)', fontWeight: 700 }}>
-            Demo Scenario Library (Select Scenario)
+            Scenario Library
           </div>
           <span style={{ fontSize: 12, color: 'var(--fg-secondary)' }}>
             Selected: <strong className="mono">{scenario.name}</strong>
@@ -398,7 +400,7 @@ AI Provider: ${infra.aiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token
         </div>
 
         <div className="scenario-grid">
-          {DEMO_SCENARIOS.map(sc => (
+          {SCENARIOS.map(sc => (
             <div
               key={sc.id}
               onClick={() => {

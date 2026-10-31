@@ -69,9 +69,9 @@ async def check_ai_provider():
     settings = get_settings()
     provider = get_provider(
         provider_type=settings.ai_provider,
-        api_key=settings.nebius_api_key,
-        base_url=settings.nebius_base_url,
-        model=settings.nebius_model
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+        model=settings.ai_model
     )
     
     info = await provider.health_check()
