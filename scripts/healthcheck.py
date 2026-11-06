@@ -56,7 +56,7 @@ async def check_backend():
     settings = get_settings()
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.vite_api_url}/api/health")
+            resp = await client.get(f"{settings.vite_api_url}/health")
             if resp.status_code == 200:
                 return True, f"Backend API [OK] ({settings.vite_api_url})"
             return False, f"Backend API returned {resp.status_code}"
